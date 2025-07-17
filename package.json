@@ -1,0 +1,65 @@
+{
+  "name": "json-ty",
+  "version": "0.0.0",
+  "author": "Jairus Tanaka",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JairusSW/json-ty.git"
+  },
+  "main": "transform/lib/index.js",
+  "devDependencies": {
+    "@assemblyscript/wasi-shim": "^0.1.0",
+    "@types/node": "^24.0.8",
+    "assemblyscript": "^0.28.2",
+    "assemblyscript-prettier": "^3.0.1",
+    "esm": "^3.2.25",
+    "prettier": "^3.6.2",
+    "ts-node": "^10.9.2",
+    "ts-patch": "^3.3.0",
+    "typescript": "^5.8.3"
+  },
+  "bugs": {
+    "url": "https://github.com/JairusSW/json-ty/issues"
+  },
+  "contributors": [
+    "DogWhich",
+    "Romdotdog",
+    "Derek Barrera",
+    "Frankk Taylor",
+    "lekiano",
+    "Florian Guitton",
+    "Matt Johnson-Pint",
+    "Tomáš Hromada",
+    "Loredana Cirstea",
+    "Accipiter Nisus"
+  ],
+  "description": "",
+  "homepage": "https://github.com/JairusSW/json-ty#readme",
+  "keywords": [
+    "json",
+    "serialize",
+    "deserialize",
+    "parse",
+    "stringify",
+    "performance",
+    "dynamic",
+    "serde",
+    "optimized",
+    "fast",
+    "algorithm"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "@JairusSW:registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "ci": "act",
+    "test": "bash ./run-tests.sh",
+    "bench:as": "bash ./run-bench.sh",
+    "build:test": "rm -rf ./build/ && ",
+    "test:wasmtime": "wasmtime ./build/test.wasm",
+    "build:transform": "tsc -p ./transform",
+    "format": "prettier -w .",
+    "prepare": "ts-patch install -s"
+  }
+}
