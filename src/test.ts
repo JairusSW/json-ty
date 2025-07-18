@@ -1,21 +1,20 @@
 // import { JSON } from ".";
 import { serializeString } from "./serialize/string";
 
-
 // @json
-// class Vec3 {
-//   x: number = 0.0;
-//   y: number = 0.0;
-//   z: number = 0.0;
-// }
+class Vec3 {
+  x: number = 0.0;
+  y: number = 0.0;
+  z: number = 0.0;
+}
 
-// const vec: Vec3 = {
-//   x: 3.4,
-//   y: 1.2,
-//   z: 5.8,
-// };
+const vec: Vec3 = {
+  x: 3.4,
+  y: 1.2,
+  z: 5.8,
+};
 
-console.log(serializeString("hello\" world"))
+console.log(serializeString('hello" world'));
 // const serialized = JSON.stringify(vec);
 // console.log("Serialized -> " + serialized);
 
@@ -47,5 +46,4 @@ function testSerializeString() {
   }
 }
 
-
-testSerializeString()
+testSerializeString();

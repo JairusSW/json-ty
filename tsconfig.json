@@ -2,7 +2,7 @@
   "compilerOptions": {
     "plugins": [{ "transform": "./transform/index.ts" }],
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,    
+    "emitDecoratorMetadata": true,
     "allowJs": true,
     /* Visit https://aka.ms/tsconfig to read more about this file */
 
