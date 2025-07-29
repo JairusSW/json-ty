@@ -1,13 +1,10 @@
-<h6 align="center">
-  <pre>
-<span style="font-size: 2em;"> ╦╔═╗╔═╗╔╗╔ ╔╦╗╦ ╦
+<h1 align="center"><pre> ╦╔═╗╔═╗╔╗╔ ╔╦╗╦ ╦
  ║╚═╗║ ║║║║──║ ╚╦╝
-╚╝╚═╝╚═╝╝╚╝  ╩  ╩ </span>
-    TypeScript - v0.0.0
-  </pre>
-</h6>
+╚╝╚═╝╚═╝╝╚╝  ╩  ╩ </pre></h1>
 
 ## 📝 About
+
+JSON for TypeScript the way it should be. Type-safe, strict, and performant--significantly outpacing the built-in `JSON` implementation while upholding the type safety of TypeScript. A port of the wonderful [json-as library](https://github.com/JairusSW/json-as).
 
 ## 📚 Contents
 
@@ -15,10 +12,7 @@
 - [Usage](#-usage)
 - [Examples](#-examples)
   - [Omitting Fields](#️-omitting-fields)
-  - [Nullable Primitives](#️-using-nullable-primitives)
-  - [Unknown or Dynamic Data](#-working-with-unknown-or-dynamic-data)
   - [Using Raw JSON Strings](#️-using-raw-json-strings)
-  - [Using Enums](#️-working-with-enums)
   - [Custom Serializers](#️-using-custom-serializers-or-deserializers)
 - [Performance](#-performance)
 - [Debugging](#-debugging)
@@ -83,6 +77,7 @@ For more information, please read the documentation [Here](https://docs.jairus.d
 ```typescript
 import { JSON } from "json-ty";
 
+// Look mom, no ugly JSON Schemas!
 @json
 class Vec3 {
   x: number = 0.0;
@@ -117,8 +112,8 @@ const player: Player = {
   isVerified: true,
 };
 
-// Notice how it is type-safe
 const serialized = JSON.stringify<Player>(player);
+// Deserialize data back into a type-safe Player instance
 const deserialized = JSON.parse<Player>(serialized);
 
 console.log("Serialized    " + serialized);
