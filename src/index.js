@@ -30,6 +30,11 @@ export var JSON;
                     return serializeArray(data);
                 break;
         }
+        const ctor = data?.constructor;
+        if (ctor && typeof ctor.__JSON_SERIALIZE === "function") {
+            // @ts-ignore
+            return ctor.__JSON_SERIALIZE(data);
+        }
         throw new Error(`Could not serialize data of type '${typeof data}'. Make sure to add the correct decorators to classes.`);
     }
     JSON.stringify = stringify;

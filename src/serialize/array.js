@@ -7,13 +7,9 @@ export function serializeArray(data) {
   }
   let result = LEFT_BRACKET;
   for (let i = 0 | 0; i < len; i++) {
-    result += serializeVec3(data[i]) + COMMA;
+    result += JSON.stringify(data[i]) + COMMA;
   }
   const lastChunk = data[len];
-  result += serializeVec3(lastChunk) + RIGHT_BRACKET;
+  result += JSON.stringify(lastChunk) + RIGHT_BRACKET;
   return result;
-}
-
-function serializeVec3(v) {
-  return `{"x":${v.x},"y":${v.y},"z":${v.z}}`;
 }

@@ -4,14 +4,20 @@ import { JSON } from "./index.js";
 import { deserializeString } from "./deserialize/string.js";
 import { serializeString } from "./serialize/string.js";
 class Data {
+    r = null;
+    a = ["a", "b", "c"];
     b = true;
     s = "bob";
     n = 0.0;
     static __JSON_SERIALIZE(self) {
-        return "{" + ("\"b\":" + __JSON_METHODS.serializeBool(self.b)) + (",\"s\":" + __JSON_METHODS.serializeString(self.s)) + (",\"n\":" + __JSON_METHODS.serializeFloat(self.n)) + "}";
+        return "{" + ("\"r\":" + __JSON.stringify(self.r)) + (",\"a\":" + __JSON_METHODS.serializeArray(self.a)) + (",\"b\":" + __JSON_METHODS.serializeBool(self.b)) + (",\"s\":" + __JSON_METHODS.serializeString(self.s)) + (",\"n\":" + __JSON_METHODS.serializeFloat(self.n)) + "}";
     }
 }
 const data = new Data();
+data.r = new Data();
+data.r.a = [];
+data.r.b = false;
+data.r.s = "";
 if (data && typeof data.__JSON_SERIALIZE === "function") {
     console.log("Found method");
 }

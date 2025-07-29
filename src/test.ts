@@ -5,12 +5,19 @@ import { serializeString } from "./serialize/string.js";
 
 @json
 class Data {
+  r: Data | null = null;
+  a: string[] = ["a", "b", "c"];
   b: boolean = true;
   s: String = "bob"
   n: Number = 0.0;
 }
 
 const data: Data = new Data()
+data.r = new Data();
+data.r.a = [];
+data.r.b = false;
+data.r.s = ""
+
 
 if (data && typeof (data as any).__JSON_SERIALIZE === "function") {
   console.log("Found method")
