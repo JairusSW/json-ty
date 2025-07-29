@@ -2,9 +2,19 @@
  ║╚═╗║ ║║║║──║ ╚╦╝
 ╚╝╚═╝╚═╝╝╚╝  ╩  ╩ </pre></h1>
 
-## 📝 About
+<div align="center">
+</pre>JSON for TypeScript the way it should be. Type-safe, strict, and performant—significantly outpacing the built-in JSON implementation while upholding the robust type safety of TypeScript.
+</div>
 
-JSON for TypeScript the way it should be. Type-safe, strict, and performant--significantly outpacing the built-in `JSON` implementation while upholding the type safety of TypeScript. A port of the wonderful [json-as library](https://github.com/JairusSW/json-as).
+## 🧠 Why
+
+**It’s Fucking TypeScript**: Why waste TypeScript’s type system? Class definitions ensure type-safety, so you don’t get screwed by runtime errors in production.
+
+**Tuned for performance**: Fine-tuned specifically for use in V8 and JavaScriptCore with optimizations for cpu caching, inferred integers, and branch-prediction.
+
+**Lightweight and dependency-free**: With no runtime dependencies, nearly all bloat is stripped off. Even code is custom generated for performance.
+
+**Production oriented**: A massive majority of vulnarabilities occur through unsafe deserialization. This library mitigates it.
 
 ## 📚 Contents
 
