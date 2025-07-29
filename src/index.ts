@@ -1,7 +1,11 @@
 /// <reference path="./index.d.ts" />
-
-import { serializeBool } from "./serialize/bool";
-import { serializeString } from "./serialize/string";
+import {
+  serializeArray,
+  serializeBool,
+  serializeFloat,
+  serializeInteger,
+  serializeString
+} from "./exports.js";
 
 /**
  * JSON Encoder/Decoder for TypeScript
@@ -15,15 +19,24 @@ export namespace JSON {
    * @param data T
    * @returns string
    */
-  export function stringify<T>(data: T, out: string | null = null): string {
-    if (typeof data === "string") {
-      return serializeString(data);
-    } else if (typeof data === "boolean") {
-      return serializeBool(data);
-    } else if (typeof data === "number") {
-      return serializeNumber(data);
+  export function stringify<T>(data: T): string {
+    switch (typeof data) {
+      case "string":
+        return serializeString(data);
+      case "boolean":
+        return serializeBool(data);
+      case "number":
+        return serializeFloat(data);
+      case "bigint":
+        return serializeInteger(data);
+      case "object":
+        if (data === null) return "null";
+        if (Array.isArray(data)) return serializeArray(data);
+        break;
     }
-    throw new Error(`Could not serialize data. Make sure to add the correct decorators to classes.`);
+    throw new Error(
+      `Could not serialize data of type '${typeof data}'. Make sure to add the correct decorators to classes.`
+    );
   }
 
   /**
@@ -37,4 +50,12 @@ export namespace JSON {
   export function parse<T>(data: string): T {
     throw new Error(`Could not deserialize data ${data}. Make sure to add the correct decorators to classes.`);
   }
+
+  /**
+ * Serializes a number to a JSON string
+ * @param value number
+ * @returns string
+ */
+  export const _serializeFloat: (value: number) => string = serializeFloat;
+
 }

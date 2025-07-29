@@ -14,6 +14,7 @@
     "assemblyscript": "^0.28.2",
     "assemblyscript-prettier": "^3.0.1",
     "benchmark": "^2.1.4",
+    "benny": "^3.7.1",
     "esm": "^3.2.25",
     "fast-json-stringify": "^6.0.1",
     "prettier": "^3.6.2",
@@ -24,18 +25,7 @@
   "bugs": {
     "url": "https://github.com/JairusSW/json-ty/issues"
   },
-  "contributors": [
-    "DogWhich",
-    "Romdotdog",
-    "Derek Barrera",
-    "Frankk Taylor",
-    "lekiano",
-    "Florian Guitton",
-    "Matt Johnson-Pint",
-    "Tomáš Hromada",
-    "Loredana Cirstea",
-    "Accipiter Nisus"
-  ],
+  "contributors": [],
   "description": "",
   "homepage": "https://github.com/JairusSW/json-ty#readme",
   "keywords": [
@@ -64,5 +54,6 @@
     "build:transform": "tsc -p ./transform",
     "format": "prettier -w .",
     "prepare": "ts-patch install -s"
-  }
+  },
+  "type": "module"
 }

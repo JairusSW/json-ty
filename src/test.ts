@@ -1,20 +1,28 @@
-// import { JSON } from ".";
-import { serializeString } from "./serialize/string";
+import { JSON } from "./index.js";
+import { deserializeString } from "./deserialize/string.js";
+import { serializeFloat } from "./serialize/float.js";
+import { serializeString } from "./serialize/string.js";
 
-// @json
-class Vec3 {
-  x: number = 0.0;
-  y: number = 0.0;
-  z: number = 0.0;
+@json
+class Data {
+  b: boolean = true;
+  s: String = "bob"
+  n: Number = 0.0;
 }
 
-const vec: Vec3 = {
-  x: 3.4,
-  y: 1.2,
-  z: 5.8,
-};
+const data: Data = new Data()
+
+if (data && typeof (data as any).__JSON_SERIALIZE === "function") {
+  console.log("Found method")
+}
+
+const ctor = (data as any)?.constructor;
+if (ctor && typeof ctor.__JSON_SERIALIZE === "function") {
+  console.log("Found static " + ctor.__JSON_SERIALIZE(data))
+}
 
 console.log(serializeString('hello" world'));
+console.log(deserializeString("\"hello\\\" world\""))
 // const serialized = JSON.stringify(vec);
 // console.log("Serialized -> " + serialized);
 
