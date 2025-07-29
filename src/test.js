@@ -1,8 +1,21 @@
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
 import { JSON as __JSON } from "./index.js";
 import * as __JSON_METHODS from "./exports.js";
 import { JSON } from "./index.js";
 import { deserializeString } from "./deserialize/string.js";
 import { serializeString } from "./serialize/string.js";
+function alias(newName) {
+    return () => { };
+}
+;
 class Data {
     r = null;
     a = ["a", "b", "c"];
@@ -13,6 +26,10 @@ class Data {
         return "{" + ("\"r\":" + __JSON.stringify(self.r)) + (",\"a\":" + __JSON_METHODS.serializeArray(self.a)) + (",\"b\":" + __JSON_METHODS.serializeBool(self.b)) + (",\"s\":" + __JSON_METHODS.serializeString(self.s)) + (",\"n\":" + __JSON_METHODS.serializeFloat(self.n)) + "}";
     }
 }
+__decorate([
+    alias("r"),
+    __metadata("design:type", Object)
+], Data.prototype, "r", void 0);
 const data = new Data();
 data.r = new Data();
 data.r.a = [];

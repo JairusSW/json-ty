@@ -42,9 +42,6 @@ function default_1(program, pluginConfig, { ts: t }) {
                     if (!hasJsonDecorator)
                         return node;
                     console.log("Found @json class:", node.name?.text);
-                    const newModifiers = node.modifiers
-                        ? factory.createNodeArray(node.modifiers.filter(mod => !t.isDecorator(mod)))
-                        : undefined;
                     const className = node.name;
                     if (!className)
                         return node;
@@ -68,6 +65,20 @@ function default_1(program, pluginConfig, { ts: t }) {
                         prop.type.node = checker.getTypeOfSymbolAtLocation(symbol, member);
                         prop.type.text = checker.typeToString(prop.type.node);
                         schema.members.push(prop);
+                        const decorators = t.canHaveDecorators(member) ? t.getDecorators(member) : undefined;
+                        if (decorators) {
+                            for (const decorator of decorators) {
+                                const expr = decorator.expression;
+                                if (t.isCallExpression(expr) &&
+                                    t.isIdentifier(expr.expression) &&
+                                    expr.expression.text === "alias" &&
+                                    expr.arguments.length === 1 &&
+                                    t.isStringLiteral(expr.arguments[0])) {
+                                    prop.alias = expr.arguments[0].text;
+                                    console.log(`  Found @alias("${prop.alias}") for property: ${name}`);
+                                }
+                            }
+                        }
                     }
                     let serializeExpr = factory.createStringLiteral("{");
                     for (let i = 0; i < schema.members.length; i++) {
@@ -129,9 +140,19 @@ function default_1(program, pluginConfig, { ts: t }) {
                         factory.createParameterDeclaration(undefined, undefined, factory.createIdentifier("data"), undefined, factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword), undefined),
                     ], factory.createTypeReferenceNode(factory.createIdentifier(schema.name), undefined), factory.createBlock(deserializeStatements, true));
                     const newMembers = factory.createNodeArray([...node.members, serializeMethod]);
+                    const newModifiers = node.modifiers
+                        ? factory.createNodeArray(node.modifiers.filter(mod => !t.isDecorator(mod)))
+                        : undefined;
                     const updatedClass = factory.updateClassDeclaration(node, newModifiers, node.name, node.typeParameters, node.heritageClauses, newMembers);
                     console.log("Transformed class:\n" + t.createPrinter().printNode(ts.EmitHint.Unspecified, updatedClass, sourceFile));
-                    return updatedClass;
+                    return t.visitNode(updatedClass, visit);
+                }
+                else if (t.isPropertyDeclaration(node)) {
+                    const newModifiers = node.modifiers
+                        ? factory.createNodeArray(node.modifiers.filter(mod => !t.isDecorator(mod)))
+                        : undefined;
+                    const updatedProp = factory.updatePropertyDeclaration(node, newModifiers, node.name, node.questionToken || node.exclamationToken, node.type, node.initializer);
+                    return updatedProp;
                 }
                 return t.visitEachChild(node, visit, ctx);
             }

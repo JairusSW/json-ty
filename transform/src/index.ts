@@ -51,10 +51,6 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
 
           console.log("Found @json class:", node.name?.text);
 
-          const newModifiers = node.modifiers
-            ? factory.createNodeArray(node.modifiers.filter(mod => !t.isDecorator(mod)))
-            : undefined;
-
           const className = node.name;
           if (!className) return node;
 
@@ -83,6 +79,24 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
             prop.type.text = checker.typeToString(prop.type.node);
 
             schema.members.push(prop);
+
+            const decorators = t.canHaveDecorators(member) ? t.getDecorators(member) : undefined;
+            if (decorators) {
+              for (const decorator of decorators) {
+                const expr = decorator.expression;
+                if (
+                  t.isCallExpression(expr) &&
+                  t.isIdentifier(expr.expression) &&
+                  expr.expression.text === "alias" &&
+                  expr.arguments.length === 1 &&
+                  t.isStringLiteral(expr.arguments[0])
+                ) {
+
+                  prop.alias = expr.arguments[0].text;
+                  console.log(`  Found @alias("${prop.alias}") for property: ${name}`);
+                }
+              }
+            }
           }
 
           let serializeExpr: ts.Expression = factory.createStringLiteral("{");
@@ -170,7 +184,7 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
                   factory.createIdentifier("__JSON_METHODS"),
                   factory.createIdentifier("serializeArray"),
                 ),
-               undefined,
+                undefined,
                 [
                   factory.createPropertyAccessExpression(
                     factory.createIdentifier("self"),
@@ -312,6 +326,11 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
 
           const newMembers = factory.createNodeArray([...node.members, serializeMethod]);
 
+
+          const newModifiers = node.modifiers
+            ? factory.createNodeArray(node.modifiers.filter(mod => !t.isDecorator(mod)))
+            : undefined;
+
           const updatedClass = factory.updateClassDeclaration(
             node,
             newModifiers,
@@ -322,7 +341,21 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
           );
           console.log("Transformed class:\n" + t.createPrinter().printNode(ts.EmitHint.Unspecified, updatedClass, sourceFile));
 
-          return updatedClass;
+          return t.visitNode(updatedClass, visit);
+        } else if (t.isPropertyDeclaration(node)) {
+          const newModifiers = node.modifiers
+            ? factory.createNodeArray(node.modifiers.filter(mod => !t.isDecorator(mod)))
+            : undefined;
+
+          const updatedProp = factory.updatePropertyDeclaration(
+            node,
+            newModifiers,
+            node.name,
+            node.questionToken || node.exclamationToken,
+            node.type,
+            node.initializer
+          );
+          return updatedProp;
         }
 
         return t.visitEachChild(node, visit, ctx);

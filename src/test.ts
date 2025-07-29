@@ -1,8 +1,11 @@
 import { JSON } from "./index.js";
 import { deserializeString } from "./deserialize/string.js";
-import { serializeFloat } from "./serialize/float.js";
 import { serializeString } from "./serialize/string.js";
+import { strict } from "assert";
 
+function alias(newName: string): Function {
+  return () => { };
+};
 @json
 class Data {
   r: Data | null = null;
