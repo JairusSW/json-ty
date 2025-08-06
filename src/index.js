@@ -5,6 +5,13 @@ import { serializeArray, serializeBool, serializeFloat, serializeInteger, serial
  */
 export var JSON;
 (function (JSON) {
+    function from(cls, obj) {
+        // @ts-ignore
+        const o = cls.__JSON_INSTANTIATE();
+        Object.assign(o, obj);
+        return o;
+    }
+    JSON.from = from;
     /**
      * Serializes valid JSON data
      * ```js
@@ -28,12 +35,13 @@ export var JSON;
                     return "null";
                 if (Array.isArray(data))
                     return serializeArray(data);
+                const ctor = data?.constructor;
+                // console.log("ctor: ", ctor?.__JSON_SERIALIZE, data)
+                if (ctor && ctor.__JSON_SERIALIZE) {
+                    // @ts-ignore
+                    return ctor.__JSON_SERIALIZE(data);
+                }
                 break;
-        }
-        const ctor = data?.constructor;
-        if (ctor && typeof ctor.__JSON_SERIALIZE === "function") {
-            // @ts-ignore
-            return ctor.__JSON_SERIALIZE(data);
         }
         throw new Error(`Could not serialize data of type '${typeof data}'. Make sure to add the correct decorators to classes.`);
     }
@@ -46,14 +54,10 @@ export var JSON;
      * @param data string
      * @returns T
      */
-    function parse(data) {
-        throw new Error(`Could not deserialize data ${data}. Make sure to add the correct decorators to classes.`);
+    function parse(data, cls = undefined) {
+        /*if (!cls) */ return globalThis.JSON.parse(data);
+        // return cls.__JSON_DESERIALIZE()
+        // throw new Error(`Could not deserialize data ${data}. Make sure to add the correct decorators to classes.`);
     }
     JSON.parse = parse;
-    /**
-   * Serializes a number to a JSON string
-   * @param value number
-   * @returns string
-   */
-    JSON._serializeFloat = serializeFloat;
 })(JSON || (JSON = {}));

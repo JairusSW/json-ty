@@ -1,0 +1,1 @@
+export function serializeStruct<T>(data: T, cls: new (...args: any[]) => T): string;

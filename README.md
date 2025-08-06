@@ -10,9 +10,9 @@
 
 **It’s Fucking TypeScript**: Why waste TypeScript’s type system? Class definitions ensure type-safety, so you don’t get screwed by runtime errors in production.
 
-**Tuned for performance**: Fine-tuned specifically for use in V8 and JavaScriptCore with optimizations for cpu caching, inferred integers, and branch-prediction.
+**Gnarly Performance**: Tuned for V8 and JavaScriptCore with CPU cache optimizations, inferred integers, and branch prediction, hitting up to **2x-3x faster** than `JSON.stringify`/`JSON.parse`.
 
-**Lightweight and dependency-free**: With no runtime dependencies, nearly all bloat is stripped off. Even code is custom generated for performance.
+**Lightweight and dependency-free**: No runtime dependencies post-compilation. Custom-generated code strips bloat for lean, mean performance.
 
 **Production oriented**: A massive majority of vulnarabilities occur through unsafe deserialization. This library mitigates it.
 
@@ -44,16 +44,15 @@ Add the `transform` to your `tsc` command (e.g. in package.json)
 
 ### Prerequesites
 
-`json-ty` is a TypeScript transformer, so you need to configure your project to use custom transformers. This requires [ts-patch](https://github.com/nonara/ts-patch) to enable transformer support in the TypeScript compiler.
-Alternatively, add it to your `asconfig.json`
+`json-ty` is a TypeScript transformer, requiring [ts-patch](https://github.com/nonara/ts-patch) for custom transformer support.
 
-1. Install `ts-patch` and `typescript`
+1. Install [ts-patch](https://npmjs.com/package/ts-patch) and [typescript](https://npmjs.com/package/typescript)
 
 ```bash
 npm install --save-dev ts-patch typescript
 ```
 
-2. Run `ts-patch` to patch the TypeScript Compiler
+2. Patch the TypeScript Compiler
 
 ```bash
 npx ts-patch install
@@ -70,7 +69,7 @@ npx ts-patch install
 }
 ```
 
-4. Modify your `package.json` so that `ts-patch` persists after install
+4. Ensure [ts-patch](https://npmjs.com/package/ts-patch) persists
 
 ```json
 {
@@ -80,7 +79,7 @@ npx ts-patch install
 }
 ```
 
-For more information, please read the documentation [Here](https://docs.jairus.dev/json-ty/using-ts-patch)
+For more information, please read the documentation [Here](https://docs.jairus.dev/json-ty/using-ts-patch) or the [ts-patch](https://github.com/nonara/ts-patch) documentation [Here](https://github.com/nonara/ts-patch/blob/master/README.md)
 
 ## 🪄 Usage
 

@@ -43,3 +43,6 @@ declare function serializer(..._): any;
  */
 // @ts-ignore: type
 declare function deserializer(..._): any;
+
+declare type int = number;
+declare type float = number;

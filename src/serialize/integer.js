@@ -1,3 +1,3 @@
 export function serializeInteger(data) {
-  return "" + data;
+  return "" + (data | 0);
 }

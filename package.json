@@ -17,6 +17,7 @@
     "benny": "^3.7.1",
     "esm": "^3.2.25",
     "fast-json-stringify": "^6.0.1",
+    "flatted": "^3.3.3",
     "prettier": "^3.6.2",
     "ts-node": "^10.9.2",
     "ts-patch": "^3.3.0",

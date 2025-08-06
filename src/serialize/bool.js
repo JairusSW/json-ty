@@ -1,3 +1,3 @@
 export function serializeBool(data) {
-  return (data == true && "true") || "false";
+  return (data === true && "true") || "false";
 }

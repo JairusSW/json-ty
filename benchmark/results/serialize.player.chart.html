@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="X-UA-Compatible" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.5.1/dist/chart.min.js"></script>
-    <title>Serialize Boolean</title>
+    <title>Serialize Player</title>
     <style>
       body {
         margin: 0;
@@ -28,7 +28,7 @@
   </head>
   <body>
     <div class="container">
-      <canvas id="chart1754348019370" width="16" height="9"></canvas>
+      <canvas id="chart1754518957071" width="16" height="9"></canvas>
     </div>
     <script>
       const format = (num) => {
@@ -51,18 +51,18 @@
           chunked.map((chunk) => chunk.join('')).join(' ') + fractionStr
         )
       }
-      const ctx1754348019370 = document
-        .getElementById('chart1754348019370')
+      const ctx1754518957071 = document
+        .getElementById('chart1754518957071')
         .getContext('2d')
-      const chart1754348019370 = new Chart(ctx1754348019370, {
+      const chart1754518957071 = new Chart(ctx1754518957071, {
         type: 'bar',
         data: {
-          labels: ["JSON-TS","Native","FJS"],
+          labels: ["Native","FJS","JSON-TS"],
           datasets: [
             {
-              data: [156649107,22827209,144326985],
-              backgroundColor: ["hsl(120, 85%, 55%)","hsl(17.483999999999995, 85%, 55%)","hsl(110.556, 85%, 55%)"],
-              borderColor: ["hsl(120, 85%, 55%)","hsl(17.483999999999995, 85%, 55%)","hsl(110.556, 85%, 55%)"],
+              data: [2700073,2902131,2698923],
+              backgroundColor: ["hsl(111.64800000000001, 85%, 55%)","hsl(120, 85%, 55%)","hsl(111.60000000000001, 85%, 55%)"],
+              borderColor: ["hsl(111.64800000000001, 85%, 55%)","hsl(120, 85%, 55%)","hsl(111.60000000000001, 85%, 55%)"],
               borderWidth: 2,
             },
           ],
@@ -72,7 +72,7 @@
           plugins: {
             title: {
               display: true,
-              text: 'Serialize Boolean',
+              text: 'Serialize Player',
               font: { size: 20 },
               padding: 20,
             },
