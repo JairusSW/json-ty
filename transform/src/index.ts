@@ -124,6 +124,23 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
                 ) {
                   console.log("  [omitif] " + prop.name);
                   prop.omitif = expr.arguments[0];
+
+                  const param = expr.arguments[0].parameters[0];
+                  const paramName = param.name.getText(sourceFile);
+                  const paramType = param.type;
+
+                  if (expr.arguments[0].body.kind !== t.SyntaxKind.Block && paramName !== "self") {
+                    throw new Error(
+                      `@omitif condition for property "${prop.name}" must have first parameter named "self". Got "${paramName}".`
+                    );
+                  }
+
+                  if (!paramType || !t.isTypeReferenceNode(paramType) || paramType.typeName.getText(sourceFile) !== schema.name) {
+                    const found = paramType?.getText(sourceFile) ?? "<missing>";
+                    throw new Error(
+                      `@omitif condition for property "${prop.name}" must have type "${schema.name}" on its first parameter. Got "${found}".`
+                    );
+                  }
                 } else if (
                   t.isIdentifier(expr) &&
                   expr.text === "omit"
@@ -161,33 +178,72 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
 
             if (member.omit) continue;
 
+            let chunk: ts.BinaryExpression | ts.ParenthesizedExpression | null = null;
             console.log(name + " -> " + rawTypeName);
             if (typeName == "number" || typeName == "Number") {
               if (rawTypeName == "int") {
-                const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeInteger")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
-                serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
+                const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeInteger")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
+                chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
               } else {
                 const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeFloat")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
-                serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
+                chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
               }
             } else if (typeName === "string" || typeName === "String") {
-              const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeString")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-              const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
-              serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
+              const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeString")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
+              chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
             } else if (typeName === "boolean" || typeName === "Boolean") {
-              const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeBool")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-              const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
-              serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
+              const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeBool")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
+              chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
             } else if (typeName!.startsWith("Array<") || typeName!.endsWith("[]")) {
-              const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeArray")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-              const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
-              serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
+              const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeArray")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
+              chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
             } else {
-              const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON"), factory.createIdentifier("stringify")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-              const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
-              serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
+              const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON"), factory.createIdentifier("stringify")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
+              chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
+            }
+            if (!chunk) continue;
+
+            if (member.omitif) {
+              if (member.omitif.body.kind !== t.SyntaxKind.Block) {
+                chunk = factory.createParenthesizedExpression(
+                  factory.createBinaryExpression(
+                    factory.createParenthesizedExpression(
+                      factory.createBinaryExpression(
+                        factory.createPrefixUnaryExpression(
+                          t.SyntaxKind.ExclamationToken,
+                          factory.createParenthesizedExpression(
+                            member.omitif.body
+                          )
+                        ),
+                        factory.createToken(t.SyntaxKind.AmpersandAmpersandToken),
+                        chunk
+                      )
+                    ),
+                    factory.createToken(t.SyntaxKind.BarBarToken),
+                    factory.createStringLiteral("", false)
+                  )
+                )
+              } else {
+                chunk = factory.createParenthesizedExpression(
+                  factory.createBinaryExpression(factory.createParenthesizedExpression(
+                    factory.createBinaryExpression(
+                      factory.createCallExpression(
+                        factory.createParenthesizedExpression(member.omitif),
+                        undefined,
+                        [factory.createIdentifier("self")]
+                      ),
+                      factory.createToken(t.SyntaxKind.AmpersandAmpersandToken),
+                      chunk
+                    )
+                  ),
+                    factory.createToken(t.SyntaxKind.BarBarToken),
+                    factory.createStringLiteral("", false)
+                  )
+                )
+              }
+              serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), chunk);
+            } else {
+              serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), chunk);
             }
           }
 
