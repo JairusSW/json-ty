@@ -30,7 +30,7 @@ console.log("v1: " + JSON.stringify(v1));
 const p1 = JSON.from(Player, {
   firstName: "Jairus",
   lastName: "Tanaka",
-  age: 18,
+  age: 17,
   lastActive: [8, 30, 2025],
   pos: JSON.from(Vec3, {
     x: 1.23,
