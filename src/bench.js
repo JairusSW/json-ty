@@ -5,6 +5,7 @@ import fastJson from "fast-json-stringify";
 import { serializeString } from "./serialize/string.js";
 import { assert } from "console";
 import { JSON as JSONT } from "./index.js";
+import { serializeObject } from "./serialize/object.js";
 function blackbox(value) {
     ;
     globalThis.__blackbox ||= new Function("v", "return v");
@@ -155,14 +156,14 @@ let data2 = str1;
 (async () => {
     // await b.suite(
     //   "Serialize String",
-    //   b.add("JSON-TS", () => {
-    //     blackbox(serializeString(blackbox(str1)));
-    //   }),
     //   b.add("Native", () => {
     //     blackbox(JSON.stringify(blackbox(str1)));
     //   }),
     //   b.add("FJS", () => {
     //     blackbox(fastJson({ type: "string" })(blackbox(str1)));
+    //   }),
+    //   b.add("JSON-TS", () => {
+    //     blackbox(serializeString(blackbox(str1)));
     //   }),
     //   b.cycle(),
     //   b.complete(),
@@ -180,18 +181,15 @@ let data2 = str1;
     //   b.complete(),
     //   b.save({ file: "deserialize.string", format: "chart.html" })
     // );
-    await b.suite("Serialize Vec3", b.add("Native", () => {
-        vec.x--;
+    await b.suite("Serialize Vec3", b.add((vec.x = 3.4, "Native"), () => {
         blackbox(JSON.stringify(blackbox(vec)));
         vec.x++;
-    }), b.add("FJS", () => {
-        vec.x--;
+    }), b.add((vec.x = 3.4, "FJS"), () => {
         blackbox(stringifyVec3Fast(blackbox(vec)));
         vec.x++;
-    }), b.add("JSON-TS", () => {
-        vec.x--;
+    }), b.add((vec.x = 3.4, "JSON-TS"), () => {
         // @ts-ignore
-        blackbox(JSONT.stringify(vec_cls));
+        blackbox(serializeObject(vec, Vec3));
         vec.x++;
     }), b.cycle(), b.complete(), b.save({ file: "serialize.vec3", format: "chart.html" }));
     await b.suite("Serialize Player", b.add("Native", () => {

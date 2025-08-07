@@ -8,6 +8,7 @@ import { serializeFloat } from "./serialize/float.js";
 import { deserializeString } from "./deserialize/string.js";
 import { JSON as JSONT } from "./index.js";
 import { serializeStruct } from "./serialize/struct.js";
+import { serializeObject } from "./serialize/object.js";
 
 function blackbox<T>(value: T): T {
   ; (globalThis as any).__blackbox ||= new Function("v", "return v");
@@ -200,23 +201,20 @@ let data2 = str1;
   await b.suite(
     "Serialize Vec3",
 
-    b.add("Native", () => {
-      vec.x--;
+    b.add((vec.x = 3.4, "Native"), () => {
       blackbox(JSON.stringify(blackbox(vec)));
       vec.x++;
     }),
 
-    b.add("FJS", () => {
-      vec.x--;
+    b.add((vec.x = 3.4, "FJS"), () => {
       blackbox(stringifyVec3Fast(blackbox(vec)));
       vec.x++;
     }),
 
-    b.add("JSON-TS", () => {
-      vec.x--;
+    b.add((vec.x = 3.4, "JSON-TS"), () => {
       // @ts-ignore
-      blackbox(JSONT.stringify<Vec3>(vec_cls));
-      vec.x++;
+      blackbox(serializeObject<Vec3>(vec, Vec3));
+      vec.x++
     }),
 
     b.cycle(),
