@@ -13,6 +13,7 @@ class Player {
   firstName!: string;
   lastName!: string;
   lastActive!: number[];
+  @omitif((self: Player) => self.age < 18)
   age!: number;
   pos!: Vec3 | null;
   isVerified!: boolean;

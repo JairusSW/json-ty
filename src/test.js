@@ -29,7 +29,7 @@ class Player {
         return o;
     }
     static __JSON_SERIALIZE(self) {
-        return "{" + ("\"first_name\":" + __JSON_METHODS.serializeString(self.firstName)) + (",\"lastName\":" + __JSON_METHODS.serializeString(self.lastName)) + (",\"lastActive\":" + __JSON_METHODS.serializeArray(self.lastActive)) + (",\"age\":" + __JSON_METHODS.serializeFloat(self.age)) + (",\"pos\":" + __JSON.stringify(self.pos)) + (",\"isVerified\":" + __JSON_METHODS.serializeBool(self.isVerified)) + "}";
+        return "{" + ("\"first_name\":" + __JSON_METHODS.serializeString(self.firstName)) + (",\"lastName\":" + __JSON_METHODS.serializeString(self.lastName)) + (",\"lastActive\":" + __JSON_METHODS.serializeArray(self.lastActive)) + (",\"age\":" + __JSON_METHODS.serializeFloat(self.age)) + (",\"isVerified\":" + __JSON_METHODS.serializeBool(self.isVerified)) + "}";
     }
     static __JSON_DESERIALIZE(data) {
         const obj = JSON.parse(data);
@@ -47,11 +47,11 @@ const p1 = JSON.from(Player, {
     lastName: "Tanaka",
     age: 18,
     lastActive: [8, 30, 2025],
-    pos: JSON.from(Vec3, {
-        x: 1.23,
-        y: 4.56,
-        z: 7.89
-    }),
+    // pos: JSON.from(Vec3, {
+    //   x: 1.23,
+    //   y: 4.56,
+    //   z: 7.89
+    // }),
     isVerified: true
 });
 console.log("p1: " + JSON.stringify(p1));

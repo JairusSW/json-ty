@@ -1,11 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = default_1;
-const ts = require("typescript");
 class Property {
     name = "";
     node;
     alias = null;
+    omit = false;
+    omitif = null;
+    protected = false;
     type = null;
     value = null;
     parent;
@@ -65,13 +67,22 @@ function default_1(program, pluginConfig, { ts: t }) {
                         prop.type = new PropertyType();
                         prop.type.node = checker.getTypeOfSymbolAtLocation(symbol, member);
                         prop.type.text = checker.typeToString(prop.type.node);
-                        if (ts.isPropertyDeclaration(member) && member.type) {
+                        if (t.isPropertyDeclaration(member) && member.type) {
                             prop.type.rawText = member.type.getText(sourceFile).trim();
                         }
                         else {
                             prop.type.rawText = prop.type.text;
                         }
-                        schema.members.push(prop);
+                        if (member.modifiers) {
+                            for (const mod of member.modifiers) {
+                                if (mod.kind === t.SyntaxKind.PrivateKeyword) {
+                                    prop.omit = true;
+                                }
+                                else if (mod.kind === t.SyntaxKind.ProtectedKeyword) {
+                                    prop.protected = true;
+                                }
+                            }
+                        }
                         const decorators = t.canHaveDecorators(member) ? t.getDecorators(member) : undefined;
                         if (decorators) {
                             // Collect all decorators **except** `@alias(...)`
@@ -84,7 +95,20 @@ function default_1(program, pluginConfig, { ts: t }) {
                                     expr.arguments.length === 1 &&
                                     t.isStringLiteral(expr.arguments[0])) {
                                     prop.alias = expr.arguments[0].text;
-                                    console.log(`  Found @alias("${prop.alias}") for property: ${name}`);
+                                    console.log("  [alias] " + prop.name + " -> " + prop.alias);
+                                }
+                                else if (t.isCallExpression(expr) &&
+                                    t.isIdentifier(expr.expression) &&
+                                    expr.expression.text === "omitif" &&
+                                    expr.arguments.length === 1 &&
+                                    t.isArrowFunction(expr.arguments[0])) {
+                                    console.log("  [omitif] " + prop.name);
+                                    prop.omitif = expr.arguments[0];
+                                }
+                                else if (t.isIdentifier(expr) &&
+                                    expr.text === "omit") {
+                                    console.log("  [omit] " + prop.name);
+                                    prop.omit = true;
                                 }
                                 else {
                                     newDecorators.push(decorator);
@@ -93,6 +117,7 @@ function default_1(program, pluginConfig, { ts: t }) {
                             newMembers[newMembers.indexOf(member)] = factory.createPropertyDeclaration(undefined, // TODO: Users should be able to use their own decorators
                             member.name, member.questionToken || member.exclamationToken, member.type, member.initializer);
                         }
+                        schema.members.push(prop);
                     }
                     let serializeExpr = factory.createStringLiteral("{");
                     for (let i = 0; i < schema.members.length; i++) {
@@ -102,53 +127,55 @@ function default_1(program, pluginConfig, { ts: t }) {
                         const name = member.alias || member.name;
                         const typeName = member.type?.text;
                         const rawTypeName = member.type?.rawText;
+                        if (member.omit)
+                            continue;
                         console.log(name + " -> " + rawTypeName);
                         if (typeName == "number" || typeName == "Number") {
                             if (rawTypeName == "int") {
                                 const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeInteger")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                                const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(ts.SyntaxKind.PlusToken), serializeCall);
-                                serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(ts.SyntaxKind.PlusToken), keyValue);
+                                const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
+                                serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
                             }
                             else {
                                 const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeFloat")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                                const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(ts.SyntaxKind.PlusToken), serializeCall);
-                                serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(ts.SyntaxKind.PlusToken), keyValue);
+                                const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
+                                serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
                             }
                         }
                         else if (typeName === "string" || typeName === "String") {
                             const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeString")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(ts.SyntaxKind.PlusToken), serializeCall);
-                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(ts.SyntaxKind.PlusToken), keyValue);
+                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
+                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
                         }
                         else if (typeName === "boolean" || typeName === "Boolean") {
                             const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeBool")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(ts.SyntaxKind.PlusToken), serializeCall);
-                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(ts.SyntaxKind.PlusToken), keyValue);
+                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
+                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
                         }
                         else if (typeName.startsWith("Array<") || typeName.endsWith("[]")) {
                             const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeArray")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(ts.SyntaxKind.PlusToken), serializeCall);
-                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(ts.SyntaxKind.PlusToken), keyValue);
+                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
+                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
                         }
                         else {
                             const serializeCall = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON"), factory.createIdentifier("stringify")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
-                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(ts.SyntaxKind.PlusToken), serializeCall);
-                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(ts.SyntaxKind.PlusToken), keyValue);
+                            const keyValue = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), serializeCall);
+                            serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), keyValue);
                         }
                     }
-                    serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(ts.SyntaxKind.PlusToken), factory.createStringLiteral("}"));
+                    serializeExpr = factory.createBinaryExpression(serializeExpr, factory.createToken(t.SyntaxKind.PlusToken), factory.createStringLiteral("}"));
                     let instantiateStmts = [];
-                    const instantiateMethod = factory.createMethodDeclaration([factory.createToken(ts.SyntaxKind.StaticKeyword)], undefined, factory.createIdentifier("__JSON_INSTANTIATE"), undefined, undefined, [], factory.createTypeReferenceNode(schema.node.name, undefined), factory.createBlock([
-                        factory.createVariableStatement(undefined, factory.createVariableDeclarationList([factory.createVariableDeclaration(factory.createIdentifier("o"), undefined, undefined, factory.createNewExpression(schema.node.name, undefined, []))], ts.NodeFlags.Const)),
+                    const instantiateMethod = factory.createMethodDeclaration([factory.createToken(t.SyntaxKind.StaticKeyword)], undefined, factory.createIdentifier("__JSON_INSTANTIATE"), undefined, undefined, [], factory.createTypeReferenceNode(schema.node.name, undefined), factory.createBlock([
+                        factory.createVariableStatement(undefined, factory.createVariableDeclarationList([factory.createVariableDeclaration(factory.createIdentifier("o"), undefined, undefined, factory.createNewExpression(schema.node.name, undefined, []))], t.NodeFlags.Const)),
                         factory.createReturnStatement(factory.createIdentifier("o"))
                     ], true));
-                    const serializeMethod = factory.createMethodDeclaration([factory.createToken(ts.SyntaxKind.StaticKeyword)], undefined, factory.createIdentifier("__JSON_SERIALIZE"), undefined, undefined, [factory.createParameterDeclaration(undefined, undefined, factory.createIdentifier("self"), undefined, factory.createTypeReferenceNode(factory.createIdentifier(schema.name), undefined), undefined)], factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword), factory.createBlock([factory.createReturnStatement(schema.members.length === 0 ? factory.createStringLiteral("{}") : serializeExpr)], true));
-                    const deserializeStatements = [factory.createVariableStatement(undefined, factory.createVariableDeclarationList([factory.createVariableDeclaration(factory.createIdentifier("obj"), undefined, undefined, factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("JSON"), factory.createIdentifier("parse")), undefined, [factory.createIdentifier("data")]))], ts.NodeFlags.Const)), factory.createVariableStatement(undefined, factory.createVariableDeclarationList([factory.createVariableDeclaration(factory.createIdentifier("instance"), undefined, undefined, factory.createNewExpression(factory.createIdentifier(schema.name), undefined, []))], ts.NodeFlags.Const))];
-                    const deserializeMethod = factory.createMethodDeclaration([factory.createToken(ts.SyntaxKind.StaticKeyword)], undefined, factory.createIdentifier("__JSON_DESERIALIZE"), undefined, undefined, [factory.createParameterDeclaration(undefined, undefined, factory.createIdentifier("data"), undefined, factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword), undefined)], factory.createTypeReferenceNode(factory.createIdentifier(schema.name), undefined), factory.createBlock(deserializeStatements, true));
+                    const serializeMethod = factory.createMethodDeclaration([factory.createToken(t.SyntaxKind.StaticKeyword)], undefined, factory.createIdentifier("__JSON_SERIALIZE"), undefined, undefined, [factory.createParameterDeclaration(undefined, undefined, factory.createIdentifier("self"), undefined, factory.createTypeReferenceNode(factory.createIdentifier(schema.name), undefined), undefined)], factory.createKeywordTypeNode(t.SyntaxKind.StringKeyword), factory.createBlock([factory.createReturnStatement(schema.members.length === 0 ? factory.createStringLiteral("{}") : serializeExpr)], true));
+                    const deserializeStatements = [factory.createVariableStatement(undefined, factory.createVariableDeclarationList([factory.createVariableDeclaration(factory.createIdentifier("obj"), undefined, undefined, factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("JSON"), factory.createIdentifier("parse")), undefined, [factory.createIdentifier("data")]))], t.NodeFlags.Const)), factory.createVariableStatement(undefined, factory.createVariableDeclarationList([factory.createVariableDeclaration(factory.createIdentifier("instance"), undefined, undefined, factory.createNewExpression(factory.createIdentifier(schema.name), undefined, []))], t.NodeFlags.Const))];
+                    const deserializeMethod = factory.createMethodDeclaration([factory.createToken(t.SyntaxKind.StaticKeyword)], undefined, factory.createIdentifier("__JSON_DESERIALIZE"), undefined, undefined, [factory.createParameterDeclaration(undefined, undefined, factory.createIdentifier("data"), undefined, factory.createKeywordTypeNode(t.SyntaxKind.StringKeyword), undefined)], factory.createTypeReferenceNode(factory.createIdentifier(schema.name), undefined), factory.createBlock(deserializeStatements, true));
                     newMembers = [...newMembers, instantiateMethod, serializeMethod, deserializeMethod];
                     const newModifiers = node.modifiers ? factory.createNodeArray(node.modifiers.filter((mod) => !t.isDecorator(mod))) : undefined;
                     const updatedClass = factory.updateClassDeclaration(node, newModifiers, node.name, node.typeParameters, node.heritageClauses, factory.createNodeArray(newMembers));
-                    console.log("Transformed class:\n" + t.createPrinter().printNode(ts.EmitHint.Unspecified, updatedClass, sourceFile));
+                    console.log("Transformed class:\n" + t.createPrinter().printNode(t.EmitHint.Unspecified, updatedClass, sourceFile));
                     return t.visitNode(updatedClass, visit);
                 }
                 // else if (t.isCallExpression(node)) {
