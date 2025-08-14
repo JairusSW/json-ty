@@ -213,7 +213,7 @@ let data2 = str1;
 
     b.add((vec.x = 3.4, "JSON-TS"), () => {
       // @ts-ignore
-      blackbox(serializeObject<Vec3>(vec, Vec3));
+      blackbox(serializeObject<Vec3>(blackbox(vec), Vec3));
       vec.x++
     }),
 
@@ -225,22 +225,19 @@ let data2 = str1;
   await b.suite(
     "Serialize Player",
 
-    b.add("Native", () => {
-      vec.x--;
+    b.add((vec.x = 3.4, "Native"), () => {
       blackbox(JSON.stringify(blackbox(player)));
       vec.x++;
     }),
 
-    b.add("FJS", () => {
-      vec.x--;
-      blackbox(stringifyPlayerFast(blackbox(player)));
+    b.add((vec.x = 3.4, "FJS"), () => {
+      blackbox(stringifyPlayerFast(blackbox(player_cls)));
       vec.x++;
     }),
 
-    b.add("JSON-TS", () => {
-      vec.x--;
+    b.add((vec.x = 3.4, "JSON-TS"), () => {
       // @ts-ignore
-      blackbox(JSON.stringify(blackbox(player_cls)));
+      blackbox(serializeObject<Player>(blackbox(player), Player));
       vec.x++;
     }),
 

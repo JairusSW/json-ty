@@ -26,8 +26,9 @@ class Schema {
 }
 class Options {
     schema = null;
+    schemas = [];
 }
-const opt = new Options();
+const self = new Options();
 function default_1(program, pluginConfig, { ts: t }) {
     return (ctx) => {
         const { factory } = ctx;
@@ -50,7 +51,8 @@ function default_1(program, pluginConfig, { ts: t }) {
                     const schema = new Schema();
                     schema.node = node;
                     schema.name = className.text;
-                    opt.schema = schema;
+                    self.schemas.push(schema);
+                    self.schema = schema;
                     const properties = node.members.filter(t.isPropertyDeclaration);
                     const checker = program.getTypeChecker();
                     let newMembers = [...node.members];
@@ -163,6 +165,10 @@ function default_1(program, pluginConfig, { ts: t }) {
                             const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeArray")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
                             chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
                         }
+                        else if (self.schemas.map((v) => v.name == typeName?.split("<")[0])) {
+                            const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeStruct")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name)), factory.createIdentifier(stripNull(member.type?.text))]);
+                            chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
+                        }
                         else {
                             const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON"), factory.createIdentifier("stringify")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
                             chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
@@ -228,8 +234,8 @@ function default_1(program, pluginConfig, { ts: t }) {
                 return t.visitEachChild(node, visit, ctx);
             }
             let src = t.visitNode(sourceFile, visit);
-            if (opt.schema) {
-                opt.schema = null;
+            if (self.schema) {
+                self.schema = null;
                 console.log("Updating source file");
                 src = factory.updateSourceFile(sourceFile, [factory.createImportDeclaration(undefined, factory.createImportClause(false, undefined, factory.createNamedImports([factory.createImportSpecifier(false, factory.createIdentifier("JSON"), factory.createIdentifier("__JSON"))])), factory.createStringLiteral("./index.js"), undefined), factory.createImportDeclaration(undefined, factory.createImportClause(false, undefined, factory.createNamespaceImport(factory.createIdentifier("__JSON_METHODS"))), factory.createStringLiteral("./exports.js"), undefined), ...src.statements]);
             }
@@ -238,3 +244,6 @@ function default_1(program, pluginConfig, { ts: t }) {
     };
 }
 console.log("Transformer initiated");
+function stripNull(ty) {
+    return ty.replaceAll(" | null", "");
+}

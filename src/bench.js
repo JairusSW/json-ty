@@ -41,7 +41,7 @@ class Player {
         return o;
     }
     static __JSON_SERIALIZE(self) {
-        return "{" + ("\"firstName\":" + __JSON_METHODS.serializeString(self.firstName)) + (",\"lastName\":" + __JSON_METHODS.serializeString(self.lastName)) + (",\"lastActive\":" + __JSON_METHODS.serializeArray(self.lastActive)) + (",\"age\":" + __JSON_METHODS.serializeFloat(self.age)) + (",\"pos\":" + __JSON.stringify(self.pos)) + (",\"isVerified\":" + __JSON_METHODS.serializeBool(self.isVerified)) + "}";
+        return "{" + ("\"firstName\":" + __JSON_METHODS.serializeString(self.firstName)) + (",\"lastName\":" + __JSON_METHODS.serializeString(self.lastName)) + (",\"lastActive\":" + __JSON_METHODS.serializeArray(self.lastActive)) + (",\"age\":" + __JSON_METHODS.serializeFloat(self.age)) + (",\"pos\":" + __JSON_METHODS.serializeStruct(self.pos, Vec3)) + (",\"isVerified\":" + __JSON_METHODS.serializeBool(self.isVerified)) + "}";
     }
     static __JSON_DESERIALIZE(data) {
         const obj = JSON.parse(data);
@@ -189,21 +189,18 @@ let data2 = str1;
         vec.x++;
     }), b.add((vec.x = 3.4, "JSON-TS"), () => {
         // @ts-ignore
-        blackbox(serializeObject(vec, Vec3));
+        blackbox(serializeObject(blackbox(vec), Vec3));
         vec.x++;
     }), b.cycle(), b.complete(), b.save({ file: "serialize.vec3", format: "chart.html" }));
-    await b.suite("Serialize Player", b.add("Native", () => {
-        vec.x--;
+    await b.suite("Serialize Player", b.add((vec.x = 3.4, "Native"), () => {
         blackbox(JSON.stringify(blackbox(player)));
         vec.x++;
-    }), b.add("FJS", () => {
-        vec.x--;
-        blackbox(stringifyPlayerFast(blackbox(player)));
+    }), b.add((vec.x = 3.4, "FJS"), () => {
+        blackbox(stringifyPlayerFast(blackbox(player_cls)));
         vec.x++;
-    }), b.add("JSON-TS", () => {
-        vec.x--;
+    }), b.add((vec.x = 3.4, "JSON-TS"), () => {
         // @ts-ignore
-        blackbox(JSON.stringify(blackbox(player_cls)));
+        blackbox(serializeObject(blackbox(player), Player));
         vec.x++;
     }), b.cycle(), b.complete(), b.save({ file: "serialize.player", format: "chart.html" }));
     // await b.suite(

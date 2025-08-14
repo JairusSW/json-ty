@@ -3,6 +3,8 @@ export * from "./serialize/bool.js";
 export * from "./serialize/float.js";
 export * from "./serialize/integer.js";
 export * from "./serialize/string.js";
+export * from "./serialize/struct.js";
+export * from "./serialize/object.js";
 // export * from "./deserialize/array.js";
 // export * from "./deserialize/bool.js";
 // export * from "./deserialize/float.js";

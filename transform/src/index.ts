@@ -31,9 +31,10 @@ class Schema {
 
 class Options {
   public schema: Schema | null = null;
+  public schemas: Schema[] = [];
 }
 
-const opt = new Options();
+const self = new Options();
 
 export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: t }: TransformerExtras) {
   return (ctx: ts.TransformationContext) => {
@@ -61,7 +62,8 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
           schema.node = node;
           schema.name = className.text;
 
-          opt.schema = schema;
+          self.schemas.push(schema)
+          self.schema = schema;
 
           const properties = node.members.filter(t.isPropertyDeclaration);
           const checker = program.getTypeChecker();
@@ -163,7 +165,6 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
             }
 
             schema.members.push(prop);
-
           }
 
           let serializeExpr: ts.Expression = factory.createStringLiteral("{");
@@ -196,6 +197,9 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
               chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
             } else if (typeName!.startsWith("Array<") || typeName!.endsWith("[]")) {
               const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeArray")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
+              chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
+            } else if (self.schemas.map((v) => v.name == typeName?.split("<")[0])) {
+              const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeStruct")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name)), factory.createIdentifier(stripNull(member.type?.text!))]);
               chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
             } else {
               const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON"), factory.createIdentifier("stringify")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
@@ -338,8 +342,8 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
 
       let src = t.visitNode(sourceFile, visit) as ts.SourceFile;
 
-      if (opt.schema) {
-        opt.schema = null;
+      if (self.schema) {
+        self.schema = null;
         console.log("Updating source file");
         src = factory.updateSourceFile(sourceFile, [factory.createImportDeclaration(undefined, factory.createImportClause(false, undefined, factory.createNamedImports([factory.createImportSpecifier(false, factory.createIdentifier("JSON"), factory.createIdentifier("__JSON"))])), factory.createStringLiteral("./index.js"), undefined), factory.createImportDeclaration(undefined, factory.createImportClause(false, undefined, factory.createNamespaceImport(factory.createIdentifier("__JSON_METHODS"))), factory.createStringLiteral("./exports.js"), undefined), ...src.statements]);
       }
@@ -350,3 +354,7 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
 }
 
 console.log("Transformer initiated");
+
+function stripNull(ty: string): string {
+  return ty.replaceAll(" | null", "")
+}
