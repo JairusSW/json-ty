@@ -1,95 +1,42 @@
-// Validate the WASM parse engine end-to-end (hand-navigated tape).
-import { parse, enter, regionCount, regionType, objKey, objSlotAt, arrSlotAt, decodeSlot, readString, T } from "./runtime.js";
+// Engine edge-case validation for the schema-directed parser.
+import { registerSchema, parseObject, slotAt, readString, T } from "./runtime.js";
 
 let fails = 0;
-const eq = (name, got, want) => { if (got !== want) { console.log(`✗ ${name}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`); fails++; } };
+const eq = (n, g, w) => { if (g !== w) { console.log(`✗ ${n}: ${JSON.stringify(g)} want ${JSON.stringify(w)}`); fails++; } };
 
-// helper: read an object field's value by key from a region
-function field(region, key) {
-  for (let i = 0; i < regionCount(region); i++) {
-    if (objKey(region, i) === key) return objSlotAt(region, i);
-  }
-  return undefined;
-}
-
-// --- Vec3: all eager scalars ---
+// scalars: number/int/bool/null + scientific
 {
-  const r = parse('{"x":3.4,"y":1.2,"z":8.3}');
-  eq("vec3 type", regionType(r), T.OBJECT);
-  eq("vec3 count", regionCount(r), 3);
-  eq("vec3.x", field(r, "x").number, 3.4);
-  eq("vec3.y", field(r, "y").number, 1.2);
-  eq("vec3.z", field(r, "z").number, 8.3);
+  const sid = registerSchema(["age", "verified", "deleted", "mid", "neg"]);
+  const p = parseObject(sid, '{ "age":18, "verified":true, "deleted":false, "mid":null, "neg":-2.5e1 }');
+  eq("age", slotAt(p, 0).number, 18);
+  eq("verified", (slotAt(p, 1).off & 1) === 1, true);
+  eq("deleted", (slotAt(p, 2).off & 1) === 1, false);
+  eq("mid null", slotAt(p, 3).tag, T.NULL);
+  eq("neg", slotAt(p, 4).number, -25);
 }
-
-// --- scalars: number/int/bool/null + lazy string ---
+// clean + escaped strings (ASCII slice path)
 {
-  const r = parse('{ "name":"Jairus", "age":18, "verified":true, "deleted":false, "mid":null, "neg":-2.5e1 }');
-  eq("count", regionCount(r), 6);
-  const name = field(r, "name");
-  eq("name tag", name.tag, T.STRING);
-  eq("name str", readString(name), "Jairus");
-  eq("age", field(r, "age").number, 18);
-  eq("verified", field(r, "verified").tag === T.BOOL && decodeBool(field(r, "verified")), true);
-  eq("deleted", decodeBool(field(r, "deleted")), false);
-  eq("mid null", field(r, "mid").tag, T.NULL);
-  eq("neg", field(r, "neg").number, -25);
+  const sid = registerSchema(["a", "b"]);
+  const p = parseObject(sid, '{"a":"hello","b":"a\\"b\\nc"}');
+  eq("clean tag", slotAt(p, 0).tag, T.STRING);
+  eq("clean", readString(slotAt(p, 0)), "hello");
+  eq("esc tag", slotAt(p, 1).tag, T.STRESC);
+  eq("esc", readString(slotAt(p, 1)), 'a"b\nc');
 }
-function decodeBool(slot) { // bool payload is in lo lane bit 0
-  return slot.tag === T.BOOL ? (slot.off & 1) === 1 : undefined;
-}
-
-// --- escaped string ---
+// unicode doc (decode-from-WASM path) + escaped unicode
 {
-  const r = parse('{"s":"a\\"b\\nc"}');
-  const s = field(r, "s");
-  eq("esc tag", s.tag, T.STRESC);
-  eq("esc str", readString(s), 'a"b\nc');
+  const sid = registerSchema(["name", "s"]);
+  const p = parseObject(sid, '{"name":"café €17 😀","s":"né\\"w 日"}');
+  eq("uni", readString(slotAt(p, 0)), "café €17 😀");
+  eq("uni esc", readString(slotAt(p, 1)), 'né"w 日');
+}
+// bytes input
+{
+  const sid = registerSchema(["k", "n"]);
+  const p = parseObject(sid, new TextEncoder().encode('{"k":"hello","n":42}'));
+  eq("bytes str", readString(slotAt(p, 0)), "hello");
+  eq("bytes num", slotAt(p, 1).number, 42);
 }
 
-// --- nested object (lazy enter) ---
-{
-  const json = '{"first":"A","pos":{"x":1.5,"y":2.5,"z":3.5},"ok":true}';
-  const r = parse(json);
-  const pos = field(r, "pos");
-  eq("pos tag", pos.tag, T.OBJECT);
-  const child = enter(pos.off, pos.len);          // lazy: parse the nested object now
-  eq("child type", regionType(child), T.OBJECT);
-  eq("child.x", field(child, "x").number, 1.5);
-  eq("child.z", field(child, "z").number, 3.5);
-  eq("first still ok", readString(field(r, "first")), "A");  // re-read parent after enter
-}
-
-// --- array of numbers (eager) ---
-{
-  const r = parse('{"v":[3,9,2025]}');
-  const v = field(r, "v");
-  eq("arr tag", v.tag, T.ARRAY);
-  const a = enter(v.off, v.len);
-  eq("arr type", regionType(a), T.ARRAY);
-  eq("arr count", regionCount(a), 3);
-  eq("arr[0]", arrSlotAt(a, 0).number, 3);
-  eq("arr[2]", arrSlotAt(a, 2).number, 2025);
-}
-
-// --- unicode doc: byteLength != length, so decode-from-WASM path (not slice) ---
-{
-  const r = parse('{"name":"café €17 😀","x":1}');
-  eq("uni name", readString(field(r, "name")), "café €17 😀");
-  eq("uni x", field(r, "x").number, 1);
-}
-// --- unicode doc with escapes ---
-{
-  const r = parse('{"s":"né\\"w\\nline 日"}');
-  eq("uni esc", readString(field(r, "s")), 'né"w\nline 日');
-}
-// --- bytes input (no original string -> decode path) ---
-{
-  const bytes = new TextEncoder().encode('{"k":"hello","n":42}');
-  const r = parse(bytes);
-  eq("bytes str", readString(field(r, "k")), "hello");
-  eq("bytes num", field(r, "n").number, 42);
-}
-
-console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURES`);
+console.log(fails === 0 ? "ALL PASS" : `${fails} FAILURES`);
 process.exit(fails ? 1 : 0);

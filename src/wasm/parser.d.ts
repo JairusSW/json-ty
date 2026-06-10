@@ -23,18 +23,34 @@ declare namespace __AdaptedExports {
    */
   export function reset(): void;
   /**
-   * src/wasm/parser/parse
+   * src/wasm/parser/registerSchema
+   * @param descPtr `usize`
+   * @param count `i32`
+   * @returns `i32`
+   */
+  export function registerSchema(descPtr: number, count: number): number;
+  /**
+   * src/wasm/parser/parseObject
+   * @param sid `i32`
    * @param len `i32`
    * @returns `usize`
    */
-  export function parse(len: number): number;
+  export function parseObject(sid: number, len: number): number;
   /**
-   * src/wasm/parser/enter
+   * src/wasm/parser/enterObject
+   * @param sid `i32`
    * @param off `i32`
    * @param len `i32`
    * @returns `usize`
    */
-  export function enter(off: number, len: number): number;
+  export function enterObject(sid: number, off: number, len: number): number;
+  /**
+   * src/wasm/parser/enterArray
+   * @param off `i32`
+   * @param len `i32`
+   * @returns `usize`
+   */
+  export function enterArray(off: number, len: number): number;
 }
 /** Instantiates the compiled WebAssembly module with the given imports. */
 export declare function instantiate(module: WebAssembly.Module, imports: {

@@ -1,6 +1,6 @@
-// Node runtime for the json-ty WASM parse engine. Instantiates parser.wasm,
-// copies input in (Buffer.write — Node fast path), drives parse/enter, and
-// decodes tape slots. No JS callbacks into WASM.
+// Node runtime for the schema-directed WASM parse engine. Schemas are
+// registered once (field list -> fixed slot indices); parse scatters values
+// into those slots, so field access is O(1) array indexing — no keys in output.
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -11,37 +11,41 @@ const inst = new WebAssembly.Instance(mod, { env: { abort: () => { throw new Err
 const ex = inst.exports;
 
 const SRC = ex.srcPtr() >>> 0;
-let u8 = new Uint8Array(ex.memory.buffer);
-let u32 = new Uint32Array(ex.memory.buffer);
-let f64 = new Float64Array(ex.memory.buffer);
-let nbuf = Buffer.from(ex.memory.buffer);
-const dec = new TextDecoder();
+const u8 = new Uint8Array(ex.memory.buffer);
+const u32 = new Uint32Array(ex.memory.buffer);
+const f64 = new Float64Array(ex.memory.buffer);
+const dv = new DataView(ex.memory.buffer);
+const nbuf = Buffer.from(ex.memory.buffer);
 
-// JSON.Types tags
-export const T = { NULL: 0, BOOL: 12, STRING: 13, OBJECT: 14, ARRAY: 15, STRESC: 22 };
+export const T = { NULL: 0, BOOL: 12, STRING: 13, OBJECT: 14, ARRAY: 15, STRESC: 22, ABSENT: 23 };
 
-// Decode a slot u64 at byte offset `at` into {tag, number?, off, len}.
-// A non-NaN double is a number; otherwise it's a NaN-boxed tag+payload.
+// Register a schema (array of JSON field names, in declaration order). The
+// field's index == its slot index. Returns a schemaId. Call once per @json class.
+export function registerSchema(keys) {
+  let p = SRC;
+  for (const k of keys) {
+    const blen = Buffer.byteLength(k, "utf8");
+    dv.setUint32(p, blen, true); // unaligned-safe length prefix
+    nbuf.write(k, p + 4, "utf8");
+    p += 4 + blen;
+  }
+  return ex.registerSchema(SRC, keys.length) | 0;
+}
+
+// pure-ASCII JS-string source ⇒ clean strings slice the original (O(1) cons).
+let asciiSource = null;
+
 export function decodeSlot(at) {
   const lo = u32[at >>> 2];
   const hi = u32[(at >>> 2) + 1];
-  const boxed = (hi & 0x7ffc0000) === 0x7ffc0000;
-  if (!boxed) return { tag: -1, number: f64[at >>> 3] }; // real double
+  if ((hi & 0x7ffc0000) !== 0x7ffc0000) return { tag: -1, number: f64[at >>> 3] };
   const tag = (hi >>> 13) & 0x1f;
   const off = lo & 0x3fffff;
   const len = (lo >>> 22) | ((hi & 0xfff) << 10);
   return { tag, off, len };
 }
+export function slotAt(slotsPtr, i) { return decodeSlot(slotsPtr + i * 8); }
 
-// When the input is a pure-ASCII JS string, byte offsets == char offsets, so a
-// clean string field is just a slice of the original (O(1) cons string, no
-// decode, no WASM read). Held here for the current parse.
-let asciiSource = null;
-
-// Materialize a string slot's content (lazy, JS-side).
-//  - clean + ASCII-source doc  -> slice the original string (O(1), no decode)
-//  - clean otherwise           -> decode the UTF-8 span from WASM memory
-//  - escaped                   -> the above, then JSON-unescape
 export function readString(slot) {
   if (asciiSource !== null) {
     const raw = asciiSource.slice(slot.off, slot.off + slot.len);
@@ -51,53 +55,19 @@ export function readString(slot) {
   return slot.tag === T.STRESC ? JSON.parse('"' + raw + '"') : raw;
 }
 
-// Copy a string/bytes input into SRC and parse the top level. Returns region ptr.
-export function parse(input) {
-  let len;
+function writeInput(input) {
   if (typeof input === "string") {
-    len = nbuf.write(input, SRC, "utf8");
-    asciiSource = len === input.length ? input : null; // pure-ASCII ⇒ slice-original
-  } else {
-    u8.set(input, SRC);
-    len = input.length;
-    asciiSource = null; // bytes input: no original string to slice
+    const len = nbuf.write(input, SRC, "utf8");
+    asciiSource = len === input.length ? input : null;
+    return len;
   }
-  return ex.parse(len) >>> 0;
-}
-export function enter(off, len) { return ex.enter(off, len) >>> 0; }
-
-// Region helpers: [count u32][type u8][pad][records]
-export function regionCount(region) { return u32[region >>> 2]; }
-export function regionType(region) { return u8[region + 4]; }
-export const RECORDS = (region) => region + 8;
-// object record (16B): keyOff u32, keyLen u32, slot u64
-export function objKey(region, i) {
-  const rec = (region + 8 + i * 16) >>> 2;
-  return readKey(u32[rec], u32[rec + 1]);
-}
-export function objKeyOff(rec) { return u32[rec >>> 2]; }
-export function objKeyLen(rec) { return u32[(rec >>> 2) + 1]; }
-
-// Read an object key (a span into SRC) as a JS string. Keys are assumed clean
-// (no escapes) in v1; ASCII docs slice the original, others decode the span.
-export function readKey(off, len) {
-  if (asciiSource !== null) return asciiSource.slice(off, off + len);
-  return nbuf.toString("utf8", SRC + off, SRC + off + len);
+  u8.set(input, SRC);
+  asciiSource = null;
+  return input.length;
 }
 
-// Compare a key span in SRC to a JS string without allocating (ASCII fast path;
-// falls back to a decoded compare for any non-ASCII field name).
-export function keyEquals(off, len, str) {
-  if (len !== str.length) return readKey(off, len) === str;
-  for (let j = 0; j < len; j++) {
-    const c = str.charCodeAt(j);
-    if (c > 127) return readKey(off, len) === str;
-    if (u8[SRC + off + j] !== c) return false;
-  }
-  return true;
-}
-export function objSlotAt(region, i) { return decodeSlot(region + 8 + i * 16 + 8); }
-// array record (8B): slot u64
+export function parseObject(sid, input) { return ex.parseObject(sid, writeInput(input)) >>> 0; }
+export function enterObject(sid, off, len) { return ex.enterObject(sid, off, len) >>> 0; }
+export function enterArray(off, len) { return ex.enterArray(off, len) >>> 0; }
+export function arrCount(region) { return u32[region >>> 2]; }
 export function arrSlotAt(region, i) { return decodeSlot(region + 8 + i * 8); }
-
-export const _src = () => SRC;

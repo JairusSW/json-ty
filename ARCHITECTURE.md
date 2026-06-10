@@ -8,6 +8,11 @@ drop-in `JSON.parse<T>` / `JSON.stringify<T>` API. Grounded in the
 
 - **Shape:** lazy on-demand parse. Scalars eager (parsed in WASM), strings &
   nested objects/arrays lazy (materialized in JS on first access, memoized).
+- **Schema-directed, O(1) field access:** each `@json` class registers its field
+  list once → fixed slot indices. The parser *scatters* each value into
+  `slots[fieldIndex]` (key-matching happens in one WASM pass), so the output has
+  **no key spans** and JS getters are `decodeSlot(slotsPtr + INDEX*8)` — a direct
+  memory read, no search. Lifts read-all (nested) from 0.47× to 1.16× native.
 - **API:** drop-in `JSON.parse<T>(input): T` / `JSON.stringify<T>(value): string`,
   json-as-style — users just `import { JSON } from "json-ty"`.
 - **Packaging:** one prebuilt generic runtime `.wasm` shipped with the package;
@@ -75,13 +80,13 @@ JSON.stringify<Player>(p);                    // pure-JS serialize (unchanged)
   instance, see Memory). Reading a stale view is a documented misuse; an
   `@eager` parse or `.toJSON()`/structuredClone detaches if you need to keep it.
 
-## Wire format (tape)
+## Wire format
 
-Per `experiments/PROTOCOL.md`. v1 concretes:
+Schema-directed, so the per-object output is a **fixed `m × u64` slot array**
+(`m` = the schema's field count), no header and **no key spans** — slot *i*
+holds field *i*'s value, or `ABSENT` if the key was missing. Arrays (positional)
+emit `[count u32][pad u32][slot u64 ...]`. Slots follow `experiments/PROTOCOL.md`:
 
-- **Header** (16 B at a fixed offset): `version u8`, `errorCode u8`,
-  `rootType u8` (JSON.Types), `flags u8`, `count u32`, `faultOffset u32`,
-  `tapePtr u32`.
 - **Slot** = `u64`, json-as-compatible NaN-box:
   - real `f64` → raw IEEE bits (scalars parsed eager land here).
   - boxed → `qNaN | tag<<45 | payload`; tag = `JSON.Types`
@@ -108,13 +113,14 @@ Per `experiments/PROTOCOL.md`. v1 concretes:
 ## Exported WASM functions
 
 ```
-reserve(nbytes: u32) -> ptr        // ensure input capacity, return write ptr (grows mem)
-parse(len: u32) -> errorCode       // tokenize + eager-scalar -> tape; fills header
-tapePtr() -> ptr                   // base of slot tape
-count() -> u32                     // top-level member/element count
-enter(start: u32, end: u32) -> ptr // build a child tape over a sub-span (lazy nesting)
-reset()                            // reset arena bump pointer
-memory                             // exported
+srcPtr() -> ptr                          // input write address
+reserve(nbytes) -> ptr                   // ensure input capacity (v1: fixed cap)
+registerSchema(descPtr, count) -> sid    // descriptor = count × [keyLen u32][bytes]; once per @json class
+parseObject(sid, len) -> slotsPtr        // scatter top-level object into m fixed slots
+enterObject(sid, off, len) -> slotsPtr   // nested object on demand (lazy)
+enterArray(off, len) -> regionPtr        // positional array: [count][slot...]
+reset()                                  // reset arena bump pointer
+memory
 ```
 
 ## Host functions (JS → WASM imports)

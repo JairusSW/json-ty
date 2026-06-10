@@ -25,13 +25,17 @@ export async function instantiate(module, imports = {}) {
       // src/wasm/parser/reserve(i32) => usize
       return exports.reserve(n) >>> 0;
     },
-    parse(len) {
-      // src/wasm/parser/parse(i32) => usize
-      return exports.parse(len) >>> 0;
+    parseObject(sid, len) {
+      // src/wasm/parser/parseObject(i32, i32) => usize
+      return exports.parseObject(sid, len) >>> 0;
     },
-    enter(off, len) {
-      // src/wasm/parser/enter(i32, i32) => usize
-      return exports.enter(off, len) >>> 0;
+    enterObject(sid, off, len) {
+      // src/wasm/parser/enterObject(i32, i32, i32) => usize
+      return exports.enterObject(sid, off, len) >>> 0;
+    },
+    enterArray(off, len) {
+      // src/wasm/parser/enterArray(i32, i32) => usize
+      return exports.enterArray(off, len) >>> 0;
     },
   }, exports);
   function __liftString(pointer) {
