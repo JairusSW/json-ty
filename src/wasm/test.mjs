@@ -72,5 +72,24 @@ function decodeBool(slot) { // bool payload is in lo lane bit 0
   eq("arr[2]", arrSlotAt(a, 2).number, 2025);
 }
 
+// --- unicode doc: byteLength != length, so decode-from-WASM path (not slice) ---
+{
+  const r = parse('{"name":"café €17 😀","x":1}');
+  eq("uni name", readString(field(r, "name")), "café €17 😀");
+  eq("uni x", field(r, "x").number, 1);
+}
+// --- unicode doc with escapes ---
+{
+  const r = parse('{"s":"né\\"w\\nline 日"}');
+  eq("uni esc", readString(field(r, "s")), 'né"w\nline 日');
+}
+// --- bytes input (no original string -> decode path) ---
+{
+  const bytes = new TextEncoder().encode('{"k":"hello","n":42}');
+  const r = parse(bytes);
+  eq("bytes str", readString(field(r, "k")), "hello");
+  eq("bytes num", field(r, "n").number, 42);
+}
+
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURES`);
 process.exit(fails ? 1 : 0);

@@ -33,16 +33,35 @@ export function decodeSlot(at) {
   return { tag, off, len };
 }
 
-// Materialize a string slot's content from the source span (lazy, JS-side).
+// When the input is a pure-ASCII JS string, byte offsets == char offsets, so a
+// clean string field is just a slice of the original (O(1) cons string, no
+// decode, no WASM read). Held here for the current parse.
+let asciiSource = null;
+
+// Materialize a string slot's content (lazy, JS-side).
+//  - clean + ASCII-source doc  -> slice the original string (O(1), no decode)
+//  - clean otherwise           -> decode the UTF-8 span from WASM memory
+//  - escaped                   -> the above, then JSON-unescape
 export function readString(slot) {
-  const s = u8.subarray(SRC + slot.off, SRC + slot.off + slot.len);
+  if (asciiSource !== null) {
+    const raw = asciiSource.slice(slot.off, slot.off + slot.len);
+    return slot.tag === T.STRESC ? JSON.parse('"' + raw + '"') : raw;
+  }
   const raw = nbuf.toString("utf8", SRC + slot.off, SRC + slot.off + slot.len);
   return slot.tag === T.STRESC ? JSON.parse('"' + raw + '"') : raw;
 }
 
 // Copy a string/bytes input into SRC and parse the top level. Returns region ptr.
 export function parse(input) {
-  const len = typeof input === "string" ? nbuf.write(input, SRC, "utf8") : (u8.set(input, SRC), input.length);
+  let len;
+  if (typeof input === "string") {
+    len = nbuf.write(input, SRC, "utf8");
+    asciiSource = len === input.length ? input : null; // pure-ASCII ⇒ slice-original
+  } else {
+    u8.set(input, SRC);
+    len = input.length;
+    asciiSource = null; // bytes input: no original string to slice
+  }
   return ex.parse(len) >>> 0;
 }
 export function enter(off, len) { return ex.enter(off, len) >>> 0; }
