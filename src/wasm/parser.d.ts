@@ -19,10 +19,6 @@ declare namespace __AdaptedExports {
    */
   export function reserve(n: number): number;
   /**
-   * src/wasm/parser/reset
-   */
-  export function reset(): void;
-  /**
    * src/wasm/parser/registerSchema
    * @param descPtr `usize`
    * @param count `i32`
@@ -30,27 +26,25 @@ declare namespace __AdaptedExports {
    */
   export function registerSchema(descPtr: number, count: number): number;
   /**
-   * src/wasm/parser/parseObject
+   * src/wasm/parser/parse
    * @param sid `i32`
    * @param len `i32`
    * @returns `usize`
    */
-  export function parseObject(sid: number, len: number): number;
+  export function parse(sid: number, len: number): number;
   /**
-   * src/wasm/parser/enterObject
-   * @param sid `i32`
-   * @param off `i32`
+   * src/wasm/parser/parseArrayOf
+   * @param elemSid `i32`
    * @param len `i32`
    * @returns `usize`
    */
-  export function enterObject(sid: number, off: number, len: number): number;
+  export function parseArrayOf(elemSid: number, len: number): number;
   /**
-   * src/wasm/parser/enterArray
-   * @param off `i32`
+   * src/wasm/parser/parsePrimArray
    * @param len `i32`
    * @returns `usize`
    */
-  export function enterArray(off: number, len: number): number;
+  export function parsePrimArray(len: number): number;
 }
 /** Instantiates the compiled WebAssembly module with the given imports. */
 export declare function instantiate(module: WebAssembly.Module, imports: {

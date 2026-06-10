@@ -1,6 +1,6 @@
-// Node runtime for the schema-directed WASM parse engine. Schemas are
-// registered once (field list -> fixed slot indices); parse scatters values
-// into those slots, so field access is O(1) array indexing — no keys in output.
+// Node runtime for the schema-tree engine. A schema's nested @json fields carry
+// a childSid, so one parse() call walks the whole registered tree and links
+// nested objects/arrays by pointer — JS then navigates with ZERO further calls.
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -17,22 +17,24 @@ const f64 = new Float64Array(ex.memory.buffer);
 const dv = new DataView(ex.memory.buffer);
 const nbuf = Buffer.from(ex.memory.buffer);
 
-export const T = { NULL: 0, BOOL: 12, STRING: 13, OBJECT: 14, ARRAY: 15, STRESC: 22, ABSENT: 23 };
+export const T = { NULL: 0, BOOL: 12, STRING: 13, OBJECT: 14, ARRAY: 15, STRESC: 22, ABSENT: 23, OBJ_PTR: 24, ARR_PTR: 25 };
+export const LEAF = -2, PRIM = -1; // childSid sentinels (scalar/string/lazy; primitive array)
 
-// Register a schema (array of JSON field names, in declaration order). The
-// field's index == its slot index. Returns a schemaId. Call once per @json class.
-export function registerSchema(keys) {
+// Register a schema. `keys` = field names (declaration order = slot index).
+// `childSids[i]` = nested @json schemaId for object/struct-array fields, PRIM
+// for number[]/string[], or LEAF (default) for scalars/strings/lazy.
+export function registerSchema(keys, childSids = []) {
   let p = SRC;
-  for (const k of keys) {
-    const blen = Buffer.byteLength(k, "utf8");
-    dv.setUint32(p, blen, true); // unaligned-safe length prefix
-    nbuf.write(k, p + 4, "utf8");
-    p += 4 + blen;
+  for (let f = 0; f < keys.length; f++) {
+    const blen = Buffer.byteLength(keys[f], "utf8");
+    dv.setUint32(p, blen, true);
+    nbuf.write(keys[f], p + 4, "utf8");
+    dv.setInt32(p + 4 + blen, childSids[f] ?? LEAF, true);
+    p += 8 + blen;
   }
   return ex.registerSchema(SRC, keys.length) | 0;
 }
 
-// pure-ASCII JS-string source ⇒ clean strings slice the original (O(1) cons).
 let asciiSource = null;
 
 export function decodeSlot(at) {
@@ -40,9 +42,7 @@ export function decodeSlot(at) {
   const hi = u32[(at >>> 2) + 1];
   if ((hi & 0x7ffc0000) !== 0x7ffc0000) return { tag: -1, number: f64[at >>> 3] };
   const tag = (hi >>> 13) & 0x1f;
-  const off = lo & 0x3fffff;
-  const len = (lo >>> 22) | ((hi & 0xfff) << 10);
-  return { tag, off, len };
+  return { tag, off: lo & 0x3fffff, len: (lo >>> 22) | ((hi & 0xfff) << 10), ptr: lo >>> 0 };
 }
 export function slotAt(slotsPtr, i) { return decodeSlot(slotsPtr + i * 8); }
 
@@ -61,13 +61,13 @@ function writeInput(input) {
     asciiSource = len === input.length ? input : null;
     return len;
   }
-  u8.set(input, SRC);
-  asciiSource = null;
-  return input.length;
+  u8.set(input, SRC); asciiSource = null; return input.length;
 }
 
-export function parseObject(sid, input) { return ex.parseObject(sid, writeInput(input)) >>> 0; }
-export function enterObject(sid, off, len) { return ex.enterObject(sid, off, len) >>> 0; }
-export function enterArray(off, len) { return ex.enterArray(off, len) >>> 0; }
+// ONE call each — the whole registered tree is parsed and linked.
+export function parse(sid, input) { return ex.parse(sid, writeInput(input)) >>> 0; }
+export function parseArrayOf(elemSid, input) { return ex.parseArrayOf(elemSid, writeInput(input)) >>> 0; }
+export function parsePrimArray(input) { return ex.parsePrimArray(writeInput(input)) >>> 0; }
+
 export function arrCount(region) { return u32[region >>> 2]; }
 export function arrSlotAt(region, i) { return decodeSlot(region + 8 + i * 8); }

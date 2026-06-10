@@ -1,5 +1,5 @@
 // Engine edge-case validation for the schema-directed parser.
-import { registerSchema, parseObject, slotAt, readString, T } from "./runtime.js";
+import { registerSchema, parse, slotAt, readString, T } from "./runtime.js";
 
 let fails = 0;
 const eq = (n, g, w) => { if (g !== w) { console.log(`✗ ${n}: ${JSON.stringify(g)} want ${JSON.stringify(w)}`); fails++; } };
@@ -7,7 +7,7 @@ const eq = (n, g, w) => { if (g !== w) { console.log(`✗ ${n}: ${JSON.stringify
 // scalars: number/int/bool/null + scientific
 {
   const sid = registerSchema(["age", "verified", "deleted", "mid", "neg"]);
-  const p = parseObject(sid, '{ "age":18, "verified":true, "deleted":false, "mid":null, "neg":-2.5e1 }');
+  const p = parse(sid, '{ "age":18, "verified":true, "deleted":false, "mid":null, "neg":-2.5e1 }');
   eq("age", slotAt(p, 0).number, 18);
   eq("verified", (slotAt(p, 1).off & 1) === 1, true);
   eq("deleted", (slotAt(p, 2).off & 1) === 1, false);
@@ -17,7 +17,7 @@ const eq = (n, g, w) => { if (g !== w) { console.log(`✗ ${n}: ${JSON.stringify
 // clean + escaped strings (ASCII slice path)
 {
   const sid = registerSchema(["a", "b"]);
-  const p = parseObject(sid, '{"a":"hello","b":"a\\"b\\nc"}');
+  const p = parse(sid, '{"a":"hello","b":"a\\"b\\nc"}');
   eq("clean tag", slotAt(p, 0).tag, T.STRING);
   eq("clean", readString(slotAt(p, 0)), "hello");
   eq("esc tag", slotAt(p, 1).tag, T.STRESC);
@@ -26,14 +26,14 @@ const eq = (n, g, w) => { if (g !== w) { console.log(`✗ ${n}: ${JSON.stringify
 // unicode doc (decode-from-WASM path) + escaped unicode
 {
   const sid = registerSchema(["name", "s"]);
-  const p = parseObject(sid, '{"name":"café €17 😀","s":"né\\"w 日"}');
+  const p = parse(sid, '{"name":"café €17 😀","s":"né\\"w 日"}');
   eq("uni", readString(slotAt(p, 0)), "café €17 😀");
   eq("uni esc", readString(slotAt(p, 1)), 'né"w 日');
 }
 // bytes input
 {
   const sid = registerSchema(["k", "n"]);
-  const p = parseObject(sid, new TextEncoder().encode('{"k":"hello","n":42}'));
+  const p = parse(sid, new TextEncoder().encode('{"k":"hello","n":42}'));
   eq("bytes str", readString(slotAt(p, 0)), "hello");
   eq("bytes num", slotAt(p, 1).number, 42);
 }
