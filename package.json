@@ -15,13 +15,17 @@
     "assemblyscript-prettier": "^3.0.1",
     "benchmark": "^2.1.4",
     "benny": "^3.7.1",
+    "chart.js": "^4.5.1",
+    "chartjs-node-canvas": "^5.0.0",
+    "chartjs-plugin-datalabels": "^2.2.0",
     "esm": "^3.2.25",
     "fast-json-stringify": "^6.0.1",
     "flatted": "^3.3.3",
     "prettier": "^3.6.2",
     "ts-node": "^10.9.2",
     "ts-patch": "^3.3.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "utf-as": "^0.1.1"
   },
   "bugs": {
     "url": "https://github.com/JairusSW/json-ty/issues"
@@ -49,7 +53,9 @@
   "scripts": {
     "ci": "act",
     "test": "bash ./run-tests.sh",
-    "bench:as": "bash ./run-bench.sh",
+    "bench": "bash ./scripts/run-bench.sh && bash ./scripts/build-charts.sh",
+    "bench:run": "bash ./scripts/run-bench.sh",
+    "bench:charts": "bash ./scripts/build-charts.sh",
     "build:test": "rm -rf ./build/ && ",
     "test:wasmtime": "wasmtime ./build/test.wasm",
     "build:transform": "tsc -p ./transform",

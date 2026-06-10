@@ -196,9 +196,37 @@ export default function (program: ts.Program, pluginConfig: PluginConfig, { ts: 
               const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeBool")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
               chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
             } else if (typeName!.startsWith("Array<") || typeName!.endsWith("[]")) {
-              const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeArray")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name))]);
+              // Specialize on the element type: primitives use typed concat/
+              // native-delegating serializers, struct arrays must go through
+              // each element's __JSON_SERIALIZE (native can't honor @alias/@omit),
+              // and anything else falls back to the native whole-array serializer.
+              const elem = typeName!.endsWith("[]")
+                ? typeName!.slice(0, -2).trim()
+                : typeName!.slice(6, -1).trim();
+              const rawElem = rawTypeName?.endsWith("[]")
+                ? rawTypeName.slice(0, -2).trim()
+                : rawTypeName?.startsWith("Array<")
+                  ? rawTypeName.slice(6, -1).trim()
+                  : elem;
+
+              let method: string;
+              const extraArgs: ts.Expression[] = [];
+              if (elem === "number" || elem === "Number") {
+                method = rawElem === "int" ? "serializeIntegerArray" : "serializeFloatArray";
+              } else if (elem === "string" || elem === "String") {
+                method = "serializeStringArray";
+              } else if (elem === "boolean" || elem === "Boolean") {
+                method = "serializeBoolArray";
+              } else if (self.schemas.some((v) => v.name === elem.split("<")[0])) {
+                method = "serializeStructArray";
+                extraArgs.push(factory.createIdentifier(elem));
+              } else {
+                method = "serializeArray";
+              }
+
+              const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier(method)), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name)), ...extraArgs]);
               chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
-            } else if (self.schemas.map((v) => v.name == typeName?.split("<")[0])) {
+            } else if (self.schemas.some((v) => v.name == typeName?.split("<")[0])) {
               const call = factory.createCallExpression(factory.createPropertyAccessExpression(factory.createIdentifier("__JSON_METHODS"), factory.createIdentifier("serializeStruct")), undefined, [factory.createPropertyAccessExpression(factory.createIdentifier("self"), factory.createIdentifier(member.name)), factory.createIdentifier(stripNull(member.type?.text!))]);
               chunk = factory.createBinaryExpression(factory.createStringLiteral(`${isFirst ? "" : ","}"${name}":`), factory.createToken(t.SyntaxKind.PlusToken), call);
             } else {
