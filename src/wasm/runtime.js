@@ -73,8 +73,28 @@ export const RECORDS = (region) => region + 8;
 // object record (16B): keyOff u32, keyLen u32, slot u64
 export function objKey(region, i) {
   const rec = (region + 8 + i * 16) >>> 2;
-  const off = u32[rec], len = u32[rec + 1];
+  return readKey(u32[rec], u32[rec + 1]);
+}
+export function objKeyOff(rec) { return u32[rec >>> 2]; }
+export function objKeyLen(rec) { return u32[(rec >>> 2) + 1]; }
+
+// Read an object key (a span into SRC) as a JS string. Keys are assumed clean
+// (no escapes) in v1; ASCII docs slice the original, others decode the span.
+export function readKey(off, len) {
+  if (asciiSource !== null) return asciiSource.slice(off, off + len);
   return nbuf.toString("utf8", SRC + off, SRC + off + len);
+}
+
+// Compare a key span in SRC to a JS string without allocating (ASCII fast path;
+// falls back to a decoded compare for any non-ASCII field name).
+export function keyEquals(off, len, str) {
+  if (len !== str.length) return readKey(off, len) === str;
+  for (let j = 0; j < len; j++) {
+    const c = str.charCodeAt(j);
+    if (c > 127) return readKey(off, len) === str;
+    if (u8[SRC + off + j] !== c) return false;
+  }
+  return true;
 }
 export function objSlotAt(region, i) { return decodeSlot(region + 8 + i * 16 + 8); }
 // array record (8B): slot u64
