@@ -21,6 +21,7 @@ const nbuf = Buffer.from(ex.memory.buffer);
 export const LEAF = -2, PRIM = -1;
 let asciiSource = null;
 
+export function resetSchemas() { ex.resetSchemas(); }
 export function registerSchema(keys, childSids = []) {
   let p = SRC;
   for (let f = 0; f < keys.length; f++) {
@@ -40,8 +41,9 @@ function writeInput(input) {
 
 // table = [count u32][M u32] then count*M 8-byte slots
 function readStrAt(j) {
-  const off = u32[j], len = u32[j + 1];
-  return asciiSource !== null ? asciiSource.slice(off, off + len) : nbuf.toString("utf8", SRC + off, SRC + off + len);
+  const off = u32[j], raw = u32[j + 1], len = raw & 0x7fffffff;
+  const s = asciiSource !== null ? asciiSource.slice(off, off + len) : nbuf.toString("utf8", SRC + off, SRC + off + len);
+  return raw & 0x80000000 ? JSON.parse('"' + s + '"') : s; // high bit = had a backslash escape
 }
 
 // Build an eager view class from the same {prop:[kind,idx,child?]} field spec

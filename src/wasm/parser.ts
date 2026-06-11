@@ -30,6 +30,8 @@ let nSchemas = 0, keysBump = 0, fieldsBump = 0;
 
 export function srcPtr(): usize { return changetype<usize>(SRC); }
 export function reserve(n: i32): usize { return changetype<usize>(SRC); }
+// Free all registered schemas (reuse the fixed-size registry slots).
+export function resetSchemas(): void { nSchemas = 0; keysBump = 0; fieldsBump = 0; }
 
 // Descriptor at descPtr: `count` × [keyLen u32][key bytes][childSid i32].
 export function registerSchema(descPtr: usize, count: i32): i32 {

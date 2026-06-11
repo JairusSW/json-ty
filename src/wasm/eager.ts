@@ -15,6 +15,7 @@ const TMP = new StaticArray<u64>(1 << 20); // record buffer for array contiguity
 let bump: usize = 0;
 let tsp: i32 = 0;
 let pend: i32 = 0; // end of the last value parsed
+let strEsc: bool = false; // did the last scanned string contain a backslash escape?
 const SCRATCH = new StaticArray<u64>(1);
 
 // ---- schema registry (descriptor: [keyLen u32][bytes][childSid i32]) ------
@@ -44,6 +45,9 @@ let hashBump = 0;
 }
 
 export function srcPtr(): usize { return changetype<usize>(SRC); }
+
+// Free all registered schemas (reuse the fixed-size registry slots).
+export function resetSchemas(): void { nSchemas = 0; keysBump = 0; fieldsBump = 0; hashBump = 0; }
 
 export function registerSchema(descPtr: usize, count: i32): i32 {
   const sid = nSchemas++;
@@ -113,7 +117,7 @@ function skipString(start: i32, end: i32): i32 {
   let k = start;
   for (;;) {
     while (k + 16 <= end) { const v = v128.load(base + k); if (v128.any_true(v128.or(i8x16.eq(v, i8x16.splat(QUOTE)), i8x16.eq(v, i8x16.splat(BACKSLASH))))) break; k += 16; }
-    while (k < end) { const c = load<u8>(base + k); if (c == BACKSLASH) { k += 2; break; } if (c == QUOTE) return k; k++; }
+    while (k < end) { const c = load<u8>(base + k); if (c == BACKSLASH) { strEsc = true; k += 2; break; } if (c == QUOTE) return k; k++; }
     if (k >= end) return k;
   }
   return k;
@@ -165,7 +169,7 @@ function storeField(p: i32, end: i32, slot: usize, child: i32): void {
   let i = p;
   while (i < end && isWs(load<u8>(base + i))) i++;
   const b = load<u8>(base + i);
-  if (b == QUOTE) { const cs = i + 1, ce = skipString(cs, end); store<u32>(slot, <u32>cs); store<u32>(slot + 4, <u32>(ce - cs)); pend = ce + 1; return; }
+  if (b == QUOTE) { const cs = i + 1; strEsc = false; const ce = skipString(cs, end); let len = <u32>(ce - cs); if (strEsc) len |= 0x80000000; store<u32>(slot, <u32>cs); store<u32>(slot + 4, len); pend = ce + 1; return; }
   if (b == LBRACE) {
     if (child >= 0) { store<u32>(slot, <u32>objTable(child, i, end)); /* pend set by objTable */ }
     else { store<f64>(slot, NaN64); pend = scanComposite(i, end); }

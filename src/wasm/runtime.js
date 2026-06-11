@@ -25,6 +25,7 @@ export const LEAF = -2, PRIM = -1; // childSid sentinels (scalar/string/lazy; pr
 // Register a schema. `keys` = field names (declaration order = slot index).
 // `childSids[i]` = nested @json schemaId for object/struct-array fields, PRIM
 // for number[]/string[], or LEAF (default) for scalars/strings/lazy.
+export function resetSchemas() { ex.resetSchemas(); }
 export function registerSchema(keys, childSids = []) {
   let p = SRC;
   for (let f = 0; f < keys.length; f++) {
