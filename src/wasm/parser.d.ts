@@ -45,6 +45,14 @@ declare namespace __AdaptedExports {
    * @returns `usize`
    */
   export function parsePrimArray(len: number): number;
+  /**
+   * src/wasm/parser/enterObject
+   * @param sid `i32`
+   * @param off `i32`
+   * @param len `i32`
+   * @returns `usize`
+   */
+  export function enterObject(sid: number, off: number, len: number): number;
 }
 /** Instantiates the compiled WebAssembly module with the given imports. */
 export declare function instantiate(module: WebAssembly.Module, imports: {

@@ -69,5 +69,8 @@ export function parse(sid, input) { return ex.parse(sid, writeInput(input)) >>> 
 export function parseArrayOf(elemSid, input) { return ex.parseArrayOf(elemSid, writeInput(input)) >>> 0; }
 export function parsePrimArray(input) { return ex.parsePrimArray(writeInput(input)) >>> 0; }
 
+// @lazy: parse a deferred object span on first access (the field was stored as
+// a span, not eagerly linked).
+export function enterObject(sid, off, len) { return ex.enterObject(sid, off, len) >>> 0; }
 export function arrCount(region) { return u32[region >>> 2]; }
 export function arrSlotAt(region, i) { return decodeSlot(region + 8 + i * 8); }

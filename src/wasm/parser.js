@@ -37,6 +37,10 @@ export async function instantiate(module, imports = {}) {
       // src/wasm/parser/parsePrimArray(i32) => usize
       return exports.parsePrimArray(len) >>> 0;
     },
+    enterObject(sid, off, len) {
+      // src/wasm/parser/enterObject(i32, i32, i32) => usize
+      return exports.enterObject(sid, off, len) >>> 0;
+    },
   }, exports);
   function __liftString(pointer) {
     if (!pointer) return null;

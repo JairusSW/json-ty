@@ -2,7 +2,7 @@
 // parsed and linked by pointer during the single parse() call, so _child /
 // _structArray wrap a pointer with NO further WASM call. Scalars eager, strings
 // materialized on first access (memoized).
-import { slotAt, decodeSlot, readString, arrCount, arrSlotAt, T } from "./runtime.js";
+import { slotAt, decodeSlot, readString, enterObject, arrCount, arrSlotAt, T } from "./runtime.js";
 
 export class View {
   constructor(slotsPtr) { this._p = slotsPtr; this._memo = null; }
@@ -25,6 +25,13 @@ export class View {
     if (s.tag === T.NULL) return null;
     if (s.tag !== T.OBJ_PTR) return undefined;
     return this._memoGet(i, () => new Ctor(s.ptr));
+  }
+  // @lazy nested struct — slot is an OBJECT span; parse it on first access
+  _childLazy(i, sid, Ctor) {
+    const s = slotAt(this._p, i);
+    if (s.tag === T.NULL) return null;
+    if (s.tag !== T.OBJECT) return undefined;
+    return this._memoGet(i, () => new Ctor(enterObject(sid, s.off, s.len)));
   }
   _numArray(i) {
     const s = slotAt(this._p, i);

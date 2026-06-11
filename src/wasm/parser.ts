@@ -13,6 +13,8 @@ const SRC = new StaticArray<u8>(INPUT_CAP);
 const ARENA = new StaticArray<u8>(ARENA_CAP);
 let bump: usize = 0;
 const SCRATCH = new StaticArray<u64>(1);
+const TMPSTACK = new StaticArray<u64>(1 << 20); // buffers array element records during parse
+let tsp: i32 = 0;
 let parseEnd: i32 = 0; // position just past the last value parsed
 
 // ---- schema registry -----------------------------------------------------
@@ -156,8 +158,8 @@ function parseValue(p: i32, end: i32, slotOut: usize, mode: i32): void {
     return;
   }
   if (b == LBRACK) {
-    if (mode >= 0) { const ptr = arrayStruct(mode, i, end); store<u64>(slotOut, ptrSlot(T_ARR_PTR, ptr)); }
-    else if (mode == MODE_PRIM) { const ptr = arrayPrim(i, end); store<u64>(slotOut, ptrSlot(T_ARR_PTR, ptr)); }
+    if (mode >= 0) { const ptr = arrayInto(mode, i, end); store<u64>(slotOut, ptrSlot(T_ARR_PTR, ptr)); }
+    else if (mode == MODE_PRIM) { const ptr = arrayInto(MODE_LEAF, i, end); store<u64>(slotOut, ptrSlot(T_ARR_PTR, ptr)); }
     else { const ve = scanComposite(i, end); store<u64>(slotOut, spanSlot(T_ARRAY, i, ve - i)); parseEnd = ve; }
     return;
   }
@@ -170,24 +172,41 @@ function parseValue(p: i32, end: i32, slotOut: usize, mode: i32): void {
   parseEnd = ne;
 }
 
-// Count top-level elements of the array at SRC[p0..end) (p0 on '['), skipping
-// nested structure without parsing.
-function countElements(p0: i32, end: i32): i32 {
+// Parse an array at SRC[p0..end) in a single scan. elemMode >= 0 => each
+// element is a struct (parsed into child slots, stored as OBJ_PTR); else leaf
+// elements. Element records are buffered on TMPSTACK (so nested arrays don't
+// interleave), then copied to a contiguous region — no count pre-pass.
+function arrayInto(elemMode: i32, p0: i32, end: i32): usize {
   const base = changetype<usize>(SRC);
-  let i = p0 + 1, count = 0;
+  const tmp = changetype<usize>(TMPSTACK);
+  const baseTsp = tsp;
+  let i = p0 + 1;
   while (i < end) {
     while (i < end && isWs(load<u8>(base + i))) i++;
-    if (load<u8>(base + i) == RBRACK) break;
     const b = load<u8>(base + i);
-    if (b == QUOTE) i = skipString(i + 1, end) + 1;
-    else if (b == LBRACE || b == LBRACK) i = scanComposite(i, end);
-    else while (i < end) { const c = load<u8>(base + i); if (c == COMMA || c == RBRACK || isWs(c)) break; i++; }
-    count++;
+    if (b == RBRACK) { i++; break; }
+    if (elemMode >= 0 && b == LBRACE) {
+      const ptr = objectInto(elemMode, i, end);
+      store<u64>(tmp + (<usize>tsp << 3), ptrSlot(T_OBJ_PTR, ptr));
+      i = parseEnd;
+    } else {
+      parseValue(i, end, tmp + (<usize>tsp << 3), MODE_LEAF);
+      i = parseEnd;
+    }
+    tsp++;
     while (i < end && isWs(load<u8>(base + i))) i++;
     if (load<u8>(base + i) == COMMA) { i++; continue; }
+    if (load<u8>(base + i) == RBRACK) { i++; break; }
     break;
   }
-  return count;
+  const count = tsp - baseTsp;
+  const region = changetype<usize>(ARENA) + bump;
+  store<u32>(region, <u32>count);
+  memory.copy(region + 8, tmp + (<usize>baseTsp << 3), <usize>count << 3);
+  bump = (region + 8 + (<usize>count << 3) - changetype<usize>(ARENA) + 7) & ~7;
+  tsp = baseTsp;
+  parseEnd = i;
+  return region;
 }
 
 // Parse an object at SRC[p0..end) into m fixed slots; returns slots ptr, sets
@@ -224,58 +243,9 @@ function objectInto(sid: i32, p0: i32, end: i32): usize {
   return slots;
 }
 
-// Primitive/leaf array: elements are scalars/strings, composites stored as lazy
-// spans (no recursion) so records stay contiguous. Region = [count u32][pad][slot...].
-function arrayPrim(p0: i32, end: i32): usize {
-  const base = changetype<usize>(SRC);
-  const region = changetype<usize>(ARENA) + bump;
-  let rec = region + 8, count = 0, i = p0 + 1;
-  while (i < end) {
-    while (i < end && isWs(load<u8>(base + i))) i++;
-    if (load<u8>(base + i) == RBRACK) { i++; break; }
-    parseValue(i, end, rec, MODE_LEAF);
-    rec += 8; count++;
-    i = parseEnd;
-    while (i < end && isWs(load<u8>(base + i))) i++;
-    if (load<u8>(base + i) == COMMA) { i++; continue; }
-    if (load<u8>(base + i) == RBRACK) { i++; break; }
-    break;
-  }
-  store<u32>(region, <u32>count);
-  parseEnd = i;
-  bump = (rec - changetype<usize>(ARENA) + 7) & ~7;
-  return region;
-}
-
-// Struct array: count elements, reserve a contiguous record block, then parse
-// each element into child slots (allocated after the block), storing OBJ_PTRs.
-function arrayStruct(elemSid: i32, p0: i32, end: i32): usize {
-  const base = changetype<usize>(SRC);
-  const n = countElements(p0, end);
-  const region = changetype<usize>(ARENA) + bump;
-  store<u32>(region, <u32>n);
-  const recBlock = region + 8;
-  bump = (recBlock + (<usize>n << 3) - changetype<usize>(ARENA) + 7) & ~7; // reserve records
-
-  let i = p0 + 1, k = 0;
-  while (i < end && k < n) {
-    while (i < end && isWs(load<u8>(base + i))) i++;
-    const b = load<u8>(base + i);
-    if (b == RBRACK) { i++; break; }
-    if (b == LBRACE) { const ptr = objectInto(elemSid, i, end); store<u64>(recBlock + (<usize>k << 3), ptrSlot(T_OBJ_PTR, ptr)); i = parseEnd; }
-    else if (b == 0x6e) { store<u64>(recBlock + (<usize>k << 3), boxed(T_NULL, 0)); i += 4; }
-    else { parseValue(i, end, recBlock + (<usize>k << 3), MODE_LEAF); i = parseEnd; }
-    k++;
-    while (i < end && isWs(load<u8>(base + i))) i++;
-    if (load<u8>(base + i) == COMMA) { i++; continue; }
-    if (load<u8>(base + i) == RBRACK) { i++; break; }
-    break;
-  }
-  parseEnd = i;
-  return region;
-}
-
 // ---- exports -------------------------------------------------------------
-export function parse(sid: i32, len: i32): usize { bump = 0; return objectInto(sid, 0, len); }
-export function parseArrayOf(elemSid: i32, len: i32): usize { bump = 0; return arrayStruct(elemSid, 0, len); }
-export function parsePrimArray(len: i32): usize { bump = 0; return arrayPrim(0, len); }
+export function parse(sid: i32, len: i32): usize { bump = 0; tsp = 0; return objectInto(sid, 0, len); }
+export function parseArrayOf(elemSid: i32, len: i32): usize { bump = 0; tsp = 0; return arrayInto(elemSid, 0, len); }
+export function parsePrimArray(len: i32): usize { bump = 0; tsp = 0; return arrayInto(MODE_LEAF, 0, len); }
+// @lazy fallback: parse a deferred object span (off,len into SRC) on demand.
+export function enterObject(sid: i32, off: i32, len: i32): usize { return objectInto(sid, off, off + len); }
