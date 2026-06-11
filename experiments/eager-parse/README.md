@@ -12,10 +12,15 @@ object/array becomes its own flat table** and the parent slot holds a **u32
 pointer** to it. JS reads each table via typed arrays and follows pointers — zero
 per-field allocation, no slot-decode object, no `Map`.
 
-- `assembly/eager.ts` — `objTable` / `arrTable` (records contiguous via a side
-  stack so nested allocations don't interleave) / `primTable`. Scalars inline
+- `assembly/eager.ts` — `objTable` / `arrTable` / `primTable`. Scalars inline
   (`f64`), strings as `(off,len)` spans, nested as u32 region pointers. Reuses
-  `parseF64`/`skipString`/`scanComposite`/`matchKey`/`registerSchema`.
+  `parseF64`/`skipString`/`scanComposite`. **One WASM call per parse** —
+  recursion happens entirely inside it; JS follows pointers via typed arrays.
+  - `matchKey`: **hybrid** — linear scan for ≤16-field schemas, O(1) open-
+    addressing **hash** above (FNV). Big win for wide objects (`large`, ~80
+    fields) without taxing small ones.
+  - `arrTable`: **flat fast path** — when the element schema has no sub-tables,
+    records are written straight to the arena (no side-stack buffering / copy).
 - `reader.mjs` — `num`/`bool`/`str` read from `Float64Array`/`Uint32Array`;
   `child` follows a pointer to a sub-table; `sumColumn` strides a numeric column.
 
@@ -29,14 +34,15 @@ bash experiments/eager-parse/run.sh     # build + bench + chart
 
 | payload | bytes | native | lazy | **eager** | eager/native |
 |---------|------:|-------:|-----:|----------:|-------------:|
-| array: sum col (2000 recs) | 124 KB | 274 | 490 | **535** | **1.94×** |
-| array: read-all            | 124 KB | 271 | 351 | **501** | **1.85×** |
-| token   | 49    | 292 | ~284 | **476** | **1.63×** |
-| small   | 44    | 197 | ~205 | **362** | **1.84×** |
-| medium  | 1070  | 423 | **0.79× (lost)** | **791** | **1.87×** |
-| large   | 5251  | 876 | **0.59× (lost)** | **967** | **1.11×** |
+| array: sum col (2000 recs) | 124 KB | 277 | 496 | **505** | **1.82×** |
+| array: read-all            | 124 KB | 274 | 358 | **477** | **1.74×** |
+| token   | 49    | 292 | ~284 | **500** | **1.71×** |
+| small   | 44    | 202 | ~205 | **371** | **1.84×** |
+| medium  | 1070  | 430 | **0.79× (lost)** | **800** | **1.86×** |
+| large   | 5251  | 889 | **0.59× (lost)** | **1160** | **1.31×** |
 
-(lazy = `experiments/deserialize` read-all; correctness-gated vs native.)
+(lazy = `experiments/deserialize` read-all; correctness-gated vs native. `large`
+went 1.11× → **1.31×** with the O(1) hash matchKey.)
 
 ## Why it wins (and where it matters)
 

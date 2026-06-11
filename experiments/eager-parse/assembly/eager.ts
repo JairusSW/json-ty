@@ -26,13 +26,29 @@ const fieldKeyLen = new StaticArray<i32>(MAX_FIELDS);
 const fieldChild = new StaticArray<i32>(MAX_FIELDS);
 const schemaStart = new StaticArray<i32>(256);
 const schemaCount = new StaticArray<i32>(256);
+const schemaFlat = new StaticArray<bool>(256); // true = no nested fields
 let nSchemas = 0, keysBump = 0, fieldsBump = 0;
+const MODE_PRIM: i32 = -1, MODE_LEAF: i32 = -2;
+
+// Per-schema open-addressing hash: key bytes -> field index (O(1) matchKey).
+const HASHTAB = new StaticArray<i32>(1 << 16);
+const schemaHashStart = new StaticArray<i32>(256);
+const schemaHashMask = new StaticArray<i32>(256);
+let hashBump = 0;
+
+// @ts-ignore
+@inline function fnv(p: usize, len: i32): u32 {
+  let h: u32 = 2166136261;
+  for (let i = 0; i < len; i++) { h ^= <u32>load<u8>(p + i); h *= 16777619; }
+  return h;
+}
 
 export function srcPtr(): usize { return changetype<usize>(SRC); }
 
 export function registerSchema(descPtr: usize, count: i32): i32 {
   const sid = nSchemas++;
-  schemaStart[sid] = fieldsBump;
+  const fstart = fieldsBump;
+  schemaStart[sid] = fstart;
   schemaCount[sid] = count;
   let p = descPtr;
   for (let f = 0; f < count; f++) {
@@ -46,10 +62,27 @@ export function registerSchema(descPtr: usize, count: i32): i32 {
     fieldsBump++;
     keysBump += <i32>klen;
   }
+  // build the hash table (size = next pow2 >= 2*count, min 4)
+  let tab = 4; while (tab < count * 2) tab <<= 1;
+  const mask = tab - 1;
+  schemaHashStart[sid] = hashBump;
+  schemaHashMask[sid] = mask;
+  for (let s = 0; s < tab; s++) HASHTAB[hashBump + s] = 0;
+  const keys = changetype<usize>(SCHEMA_KEYS);
+  for (let f = 0; f < count; f++) {
+    const fi = fstart + f;
+    const h = fnv(keys + fieldKeyOff[fi], fieldKeyLen[fi]);
+    let slot = <i32>(h & <u32>mask);
+    while (HASHTAB[hashBump + slot] != 0) slot = (slot + 1) & mask;
+    HASHTAB[hashBump + slot] = f + 1;
+  }
+  hashBump += tab;
+  // flat = no field allocates a sub-table -> records can go straight to the arena
+  let flat = true;
+  for (let f = 0; f < count; f++) if (fieldChild[fstart + f] != MODE_LEAF) { flat = false; break; }
+  schemaFlat[sid] = flat;
   return sid;
 }
-
-const MODE_PRIM: i32 = -1, MODE_LEAF: i32 = -2;
 
 // ---- byte helpers / kernels (from parser.ts) -----------------------------
 const QUOTE: u8 = 0x22, BACKSLASH: u8 = 0x5c, LBRACE: u8 = 0x7b, RBRACE: u8 = 0x7d;
@@ -97,11 +130,30 @@ function scanComposite(p: i32, end: i32): i32 {
   }
   return i;
 }
+const LINEAR_MAX: i32 = 16; // small schemas: linear scan beats hashing the key
+
 function matchKey(sid: i32, koff: i32, klen: i32): i32 {
-  const start = schemaStart[sid], n = schemaCount[sid];
   const src = changetype<usize>(SRC) + koff, keys = changetype<usize>(SCHEMA_KEYS);
-  for (let f = 0; f < n; f++) { const fi = start + f; if (fieldKeyLen[fi] != klen) continue; if (memory.compare(src, keys + fieldKeyOff[fi], klen) == 0) return f; }
-  return -1;
+  const n = schemaCount[sid], fstart = schemaStart[sid];
+  if (n <= LINEAR_MAX) {
+    for (let f = 0; f < n; f++) {
+      const fi = fstart + f;
+      if (fieldKeyLen[fi] == klen && memory.compare(src, keys + fieldKeyOff[fi], klen) == 0) return f;
+    }
+    return -1;
+  }
+  // larger schemas: O(1) hash
+  const h = fnv(src, klen);
+  const hstart = schemaHashStart[sid], mask = schemaHashMask[sid];
+  let slot = <i32>(h & <u32>mask);
+  for (;;) {
+    const e = HASHTAB[hstart + slot];
+    if (e == 0) return -1;
+    const f = e - 1, fi = fstart + f;
+    if (fieldKeyLen[fi] == klen && memory.compare(src, keys + fieldKeyOff[fi], klen) == 0) return f;
+    slot = (slot + 1) & mask;
+  }
+  return -1; // unreachable
 }
 
 const NaN64: f64 = NaN;
@@ -176,8 +228,35 @@ function objTable(sid: i32, p0: i32, end: i32): usize {
 // Array of objects -> [N][Melem] table (records contiguous via TMP). Returns region ptr.
 function arrTable(elemSid: i32, p0: i32, end: i32): usize {
   const base = changetype<usize>(SRC);
-  const tmp = changetype<usize>(TMP);
   const m = schemaCount[elemSid];
+
+  // flat fast path: records have no sub-tables, so write straight to the arena
+  // (contiguous) — no TMP buffering, no final memcpy.
+  if (schemaFlat[elemSid]) {
+    const region = changetype<usize>(ARENA) + bump;
+    bump += 8;
+    let i = p0 + 1, count = 0;
+    while (i < end) {
+      while (i < end && isWs(load<u8>(base + i))) i++;
+      if (load<u8>(base + i) == RBRACK) { i++; break; }
+      if (load<u8>(base + i) == LBRACE) {
+        const recBase = changetype<usize>(ARENA) + bump;
+        bump += <usize>m << 3;
+        for (let f = 0; f < m; f++) store<f64>(recBase + (<usize>f << 3), 0);
+        recordInto(elemSid, i, end, recBase);
+        i = pend; count++;
+      } else { i = scanComposite(i, end); }
+      while (i < end && isWs(load<u8>(base + i))) i++;
+      if (load<u8>(base + i) == COMMA) { i++; continue; }
+      if (load<u8>(base + i) == RBRACK) { i++; break; }
+      break;
+    }
+    store<u32>(region, <u32>count); store<u32>(region + 4, <u32>m);
+    pend = i;
+    return region;
+  }
+
+  const tmp = changetype<usize>(TMP);
   const baseTsp = tsp;
   let i = p0 + 1;
   while (i < end) {
