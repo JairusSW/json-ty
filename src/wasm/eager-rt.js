@@ -80,6 +80,23 @@ export function makeEagerView(keys, childSids, fields, name) {
 }
 const tcount = (region) => u32[region >>> 2];
 
+// Columnar / dataframe-lite: parse a top-level array of flat records once, then
+// pull whole columns out of the contiguous buffer. numCol copies a strided
+// column into a packed Float64Array; sum strides in place (no allocation).
+export function parseColumnar(sid, input) {
+  const region = ex.parseEagerArray(sid, writeInput(input)) >>> 0;
+  const count = u32[region >>> 2], M = u32[(region >>> 2) + 1];
+  const fb = (region + 8) >>> 3, ub = (region + 8) >>> 2;
+  return {
+    count, M,
+    numCol(f) { const o = new Float64Array(count); for (let r = 0; r < count; r++) o[r] = f64[fb + r * M + f]; return o; },
+    boolCol(f) { const o = new Uint8Array(count); for (let r = 0; r < count; r++) o[r] = f64[fb + r * M + f] !== 0 ? 1 : 0; return o; },
+    strCol(f) { const o = new Array(count); for (let r = 0; r < count; r++) o[r] = readStrAt(ub + (r * M + f) * 2); return o; },
+    sum(f) { let s = 0; for (let r = 0; r < count; r++) s += f64[fb + r * M + f]; return s; },
+    countWhere(f, pred) { let n = 0; for (let r = 0; r < count; r++) if (pred(f64[fb + r * M + f])) n++; return n; },
+  };
+}
+
 // JSON.parse<T> (eager): one record table -> a view at row 0.
 export function parseEager(sid, Ctor, input) { return new Ctor(ex.parseEagerObject(sid, writeInput(input)) >>> 0, 0); }
 // JSON.parse<T[]> (eager): array table -> array of row views.
