@@ -17,6 +17,8 @@ const f64 = new Float64Array(ex.memory.buffer);
 const dv = new DataView(ex.memory.buffer);
 const nbuf = Buffer.from(ex.memory.buffer);
 
+import { View } from "./view.js";
+export { View }; // re-export so transform-generated code can build views
 export const T = { NULL: 0, BOOL: 12, STRING: 13, OBJECT: 14, ARRAY: 15, STRESC: 22, ABSENT: 23, OBJ_PTR: 24, ARR_PTR: 25 };
 export const LEAF = -2, PRIM = -1; // childSid sentinels (scalar/string/lazy; primitive array)
 
@@ -68,6 +70,42 @@ function writeInput(input) {
 export function parse(sid, input) { return ex.parse(sid, writeInput(input)) >>> 0; }
 export function parseArrayOf(elemSid, input) { return ex.parseArrayOf(elemSid, writeInput(input)) >>> 0; }
 export function parsePrimArray(input) { return ex.parsePrimArray(writeInput(input)) >>> 0; }
+
+// Build a lazy View subclass from a field spec (called by transform-generated
+// code — emits only data, no methods, so the TS checker stays happy). `fields`
+// maps property name -> [kind, slotIndex, childTypeName?]. Child views are
+// resolved by name at access time, so declaration order doesn't matter for refs.
+const VIEWS = {};
+export function makeView(keys, childSids, fields, name) {
+  const sid = registerSchema(keys, childSids);
+  class V extends View {}
+  V.__sid = sid;
+  for (const prop in fields) {
+    const [kind, i, child] = fields[prop];
+    let get;
+    switch (kind) {
+      case "num": get = function () { return this._num(i); }; break;
+      case "str": get = function () { return this._str(i); }; break;
+      case "bool": get = function () { return this._bool(i); }; break;
+      case "numArray": get = function () { return this._numArray(i); }; break;
+      case "strArray": get = function () { return this._strArray(i); }; break;
+      case "child": get = function () { return this._child(i, VIEWS[child]); }; break;
+      case "childLazy": get = function () { return this._childLazy(i, VIEWS[child].__sid, VIEWS[child]); }; break;
+      case "structArray": get = function () { return this._structArray(i, VIEWS[child]); }; break;
+      default: get = function () { return this._str(i); };
+    }
+    Object.defineProperty(V.prototype, prop, { get, enumerable: true });
+  }
+  VIEWS[name] = V;
+  return V;
+}
+
+// Top-level array of @json structs -> array of views (one parse call).
+export function parseStructArray(elemSid, Ctor, input) {
+  const r = parseArrayOf(elemSid, input), n = u32[r >>> 2], out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = new Ctor(decodeSlot(r + 8 + i * 8).ptr);
+  return out;
+}
 
 // @lazy: parse a deferred object span on first access (the field was stored as
 // a span, not eagerly linked).
