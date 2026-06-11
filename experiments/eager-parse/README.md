@@ -1,57 +1,57 @@
-# Eager flat-buffer parser
+# Eager parser → flat tables linked by pointers
 
-The opposite end from the lazy engine. The deserialize bench showed the lazy
-path loses **full read-all** on big docs because every getter allocates a
-`{tag,off,len,ptr}` object (`decodeSlot`) + a memo `Map`, and arrays scatter
-records behind pointers (no contiguous typed-array read).
+The opposite end from the lazy engine. The deserialize bench showed the lazy path
+loses **full read-all** on big docs (`large` 0.59×, `medium` 0.79×) — every getter
+allocates a `decodeSlot` object + a memo `Map`, and arrays scatter records behind
+pointers (no contiguous typed-array read).
 
-This parser materializes everything in **one WASM pass** into a **contiguous,
-row-major record buffer** JS reads with typed arrays — **zero per-field
-allocation, no slot-decode object, no Map, no pointer indirection.**
+This parser materializes everything in **one WASM pass** into **flat tables linked
+by pointers**. Every value level is a contiguous table:
+`[count u32][M u32]` then `count×M` 8-byte slots (record-major). A **nested
+object/array becomes its own flat table** and the parent slot holds a **u32
+pointer** to it. JS reads each table via typed arrays and follows pointers — zero
+per-field allocation, no slot-decode object, no `Map`.
 
-- `assembly/eager.ts` — `parseEagerArray(elemSid, len)` parses a top-level array
-  of flat objects into `[count u32][M u32]` + `count×M` 8-byte slots, record-major.
-  number/bool → raw `f64`; string → `(off u32, len u32)` span into SRC. Reuses
-  `parseF64` / `skipString` / `scanComposite` / `matchKey` / `registerSchema`
-  from the lazy engine.
-- `reader.mjs` — zero-alloc accessors: scalars from a `Float64Array`, string
-  spans from a `Uint32Array` (slice-original for ASCII), `sumColumn` strides a
-  numeric column.
+- `assembly/eager.ts` — `objTable` / `arrTable` (records contiguous via a side
+  stack so nested allocations don't interleave) / `primTable`. Scalars inline
+  (`f64`), strings as `(off,len)` spans, nested as u32 region pointers. Reuses
+  `parseF64`/`skipString`/`scanComposite`/`matchKey`/`registerSchema`.
+- `reader.mjs` — `num`/`bool`/`str` read from `Float64Array`/`Uint32Array`;
+  `child` follows a pointer to a sub-table; `sumColumn` strides a numeric column.
 
 ```bash
 bash experiments/eager-parse/run.sh     # build + bench + chart
 ```
 
-## Results — array of 2000 flat records (~125 KB, `{id,x,y,name,active}`)
+## Results — full deserialize (read every field), MB/s
 
 ![eager](./eager.png)
 
-| task | native | json-ty lazy | **json-ty eager** | eager/native |
-|------|-------:|-------------:|------------------:|-------------:|
-| sum the `x` column | 271 MB/s | 446 MB/s | **577 MB/s** | **2.13×** |
-| read all fields    | 268 MB/s | 345 MB/s | **539 MB/s** | **2.01×** |
+| payload | bytes | native | lazy | **eager** | eager/native |
+|---------|------:|-------:|-----:|----------:|-------------:|
+| array: sum col (2000 recs) | 124 KB | 274 | 490 | **535** | **1.94×** |
+| array: read-all            | 124 KB | 271 | 351 | **501** | **1.85×** |
+| token   | 49    | 292 | ~284 | **476** | **1.63×** |
+| small   | 44    | 197 | ~205 | **362** | **1.84×** |
+| medium  | 1070  | 423 | **0.79× (lost)** | **791** | **1.87×** |
+| large   | 5251  | 876 | **0.59× (lost)** | **967** | **1.11×** |
 
-(MB/s; correctness-gated — eager/lazy sums and reads equal native.)
+(lazy = `experiments/deserialize` read-all; correctness-gated vs native.)
 
-## Why it wins
+## Why it wins (and where it matters)
 
-- **Bulk numeric (2.13×):** JSON → a contiguous `Float64Array`. Summing a column
-  is a tight typed-array loop that **never builds a JS object** — native must
-  construct 2000 objects just to read one field each.
-- **Full read-all (2.01×):** reads beat both native (no JS object tree) and the
-  lazy engine (no `decodeSlot` object, no memo `Map`, contiguous records).
+- **It flips the case the lazy engine lost.** `medium`/`large` are nested
+  string-heavy docs; lazy lost them (0.79×/0.59×). Eager flat-tables win
+  (1.87×/1.11×) — no per-field `decodeSlot`/`Map`, contiguous reads, and nested
+  objects are a pointer-follow into another flat array, not a re-parse.
+- **Bulk numeric (1.94×):** JSON → a contiguous `Float64Array`; sum a column in a
+  tight loop that **never builds a JS object**.
+- **Two regimes, covered:** lazy wins *partial* access; eager flat-tables win
+  *full deserialize* (and bulk/columnar). Same engine kernels, opposite buffer.
 
-The flat row-major buffer is the "easily digestible buffer": field *f* of record
-*r* is at a constant offset (`f64[base + r*M + f]`), so any access — single field,
-whole record, or a strided column — is a direct memory read.
+## Notes / scope
 
-## Scope / follow-ups (v1)
-
-- **Flat records only.** Nested objects / arrays-of-structs in a record are
-  stored as `NaN` placeholders — they need recursive contiguous sub-blocks (or
-  column flattening). That's why this targets uniform record arrays, not the
-  nested `medium`/`large` payloads.
-- **null** in a string field isn't distinguished from an empty span (v1 flat data
-  has none).
-- Wiring an `@eager`/columnar mode into the transform is separate from this
-  standalone experiment.
+- `null` is stored as zero bytes (number → 0, string → ""); a string `null` isn't
+  distinguished from `""` (both contribute 0 — matches native's "skip null").
+- Wiring an `@eager` mode into the transform (pick lazy vs eager per `@json`
+  class) is the natural integration; this is the standalone proof.

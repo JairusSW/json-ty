@@ -20,6 +20,13 @@ declare namespace __AdaptedExports {
    */
   export function registerSchema(descPtr: number, count: number): number;
   /**
+   * experiments/eager-parse/assembly/eager/parseEagerObject
+   * @param sid `i32`
+   * @param len `i32`
+   * @returns `usize`
+   */
+  export function parseEagerObject(sid: number, len: number): number;
+  /**
    * experiments/eager-parse/assembly/eager/parseEagerArray
    * @param elemSid `i32`
    * @param len `i32`
@@ -27,12 +34,11 @@ declare namespace __AdaptedExports {
    */
   export function parseEagerArray(elemSid: number, len: number): number;
   /**
-   * experiments/eager-parse/assembly/eager/parseEagerObject
-   * @param sid `i32`
+   * experiments/eager-parse/assembly/eager/parseEagerPrim
    * @param len `i32`
    * @returns `usize`
    */
-  export function parseEagerObject(sid: number, len: number): number;
+  export function parseEagerPrim(len: number): number;
 }
 /** Instantiates the compiled WebAssembly module with the given imports. */
 export declare function instantiate(module: WebAssembly.Module, imports: {

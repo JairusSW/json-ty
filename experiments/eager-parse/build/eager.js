@@ -21,13 +21,17 @@ export async function instantiate(module, imports = {}) {
       // experiments/eager-parse/assembly/eager/srcPtr() => usize
       return exports.srcPtr() >>> 0;
     },
+    parseEagerObject(sid, len) {
+      // experiments/eager-parse/assembly/eager/parseEagerObject(i32, i32) => usize
+      return exports.parseEagerObject(sid, len) >>> 0;
+    },
     parseEagerArray(elemSid, len) {
       // experiments/eager-parse/assembly/eager/parseEagerArray(i32, i32) => usize
       return exports.parseEagerArray(elemSid, len) >>> 0;
     },
-    parseEagerObject(sid, len) {
-      // experiments/eager-parse/assembly/eager/parseEagerObject(i32, i32) => usize
-      return exports.parseEagerObject(sid, len) >>> 0;
+    parseEagerPrim(len) {
+      // experiments/eager-parse/assembly/eager/parseEagerPrim(i32) => usize
+      return exports.parseEagerPrim(len) >>> 0;
     },
   }, exports);
   function __liftString(pointer) {
