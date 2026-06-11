@@ -7,4 +7,7 @@ logs
 as-tral
 *.lockb
 .vscode/
-build/src/playground.js
+build/
+src/playground.js
+src/wasm/eager.js
+src/wasm/eager.d.ts

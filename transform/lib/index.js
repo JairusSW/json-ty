@@ -24,6 +24,7 @@ class Schema {
     members = [];
     parent = null;
     deps = [];
+    eager = false; // @json({ eager: true }) -> flat eager parse
 }
 class Options {
     schema = null;
@@ -52,6 +53,13 @@ function default_1(program, pluginConfig, { ts: t }) {
                     const schema = new Schema();
                     schema.node = node;
                     schema.name = className.text;
+                    // @json({ eager: true }) -> eager flat-table parse for this class
+                    schema.eager = decorators.some((d) => {
+                        const e = d.expression;
+                        return t.isCallExpression(e) && t.isIdentifier(e.expression) && e.expression.text === "json" &&
+                            e.arguments.length === 1 && t.isObjectLiteralExpression(e.arguments[0]) &&
+                            e.arguments[0].properties.some((pr) => t.isPropertyAssignment(pr) && pr.name.getText(sourceFile) === "eager" && pr.initializer.kind === t.SyntaxKind.TrueKeyword);
+                    });
                     self.schemas.push(schema);
                     self.schema = schema;
                     const properties = node.members.filter(t.isPropertyDeclaration);
@@ -241,24 +249,23 @@ function default_1(program, pluginConfig, { ts: t }) {
                     node.expression.name.text === "parse") {
                     const ta = node.typeArguments[0];
                     const arg = node.arguments[0] ?? factory.createIdentifier("undefined");
-                    // JSON.parse<T>(x) -> new __View_T(__JSONparse(__View_T.__sid, x))
-                    if (t.isTypeReferenceNode(ta) && t.isIdentifier(ta.typeName) && self.schemas.some((s) => s.name === ta.typeName.getText(sourceFile))) {
-                        const tn = ta.typeName.text;
-                        return factory.createNewExpression(factory.createIdentifier(`__View_${tn}`), undefined, [
-                            factory.createCallExpression(factory.createIdentifier("__JSONparse"), undefined, [
-                                factory.createPropertyAccessExpression(factory.createIdentifier(`__View_${tn}`), factory.createIdentifier("__sid")),
-                                arg,
-                            ]),
-                        ]);
+                    const sid = (tn) => factory.createPropertyAccessExpression(factory.createIdentifier(`__View_${tn}`), factory.createIdentifier("__sid"));
+                    const view = (tn) => factory.createIdentifier(`__View_${tn}`);
+                    // JSON.parse<T>(x): eager -> parseEager(sid, View, x); lazy -> new View(parse(sid, x))
+                    if (t.isTypeReferenceNode(ta) && t.isIdentifier(ta.typeName)) {
+                        const tn = ta.typeName.getText(sourceFile);
+                        const sch = self.schemas.find((s) => s.name === tn);
+                        if (sch && sch.eager)
+                            return factory.createCallExpression(factory.createIdentifier("__JSONparseEager"), undefined, [sid(tn), view(tn), arg]);
+                        if (sch)
+                            return factory.createNewExpression(view(tn), undefined, [factory.createCallExpression(factory.createIdentifier("__JSONparse"), undefined, [sid(tn), arg])]);
                     }
-                    // JSON.parse<T[]>(x) -> __JSONparseArrV(__View_T.__sid, __View_T, x)
-                    if (t.isArrayTypeNode(ta) && t.isTypeReferenceNode(ta.elementType) && t.isIdentifier(ta.elementType.typeName) && self.schemas.some((s) => s.name === ta.elementType.typeName.getText(sourceFile))) {
+                    // JSON.parse<T[]>(x): eager -> parseEagerArrViews; lazy -> parseStructArray
+                    if (t.isArrayTypeNode(ta) && t.isTypeReferenceNode(ta.elementType) && t.isIdentifier(ta.elementType.typeName)) {
                         const tn = ta.elementType.typeName.getText(sourceFile);
-                        return factory.createCallExpression(factory.createIdentifier("__JSONparseArrV"), undefined, [
-                            factory.createPropertyAccessExpression(factory.createIdentifier(`__View_${tn}`), factory.createIdentifier("__sid")),
-                            factory.createIdentifier(`__View_${tn}`),
-                            arg,
-                        ]);
+                        const sch = self.schemas.find((s) => s.name === tn);
+                        if (sch)
+                            return factory.createCallExpression(factory.createIdentifier(sch.eager ? "__JSONparseEagerArr" : "__JSONparseArrV"), undefined, [sid(tn), view(tn), arg]);
                     }
                 }
                 return t.visitEachChild(node, visit, ctx);
@@ -268,7 +275,9 @@ function default_1(program, pluginConfig, { ts: t }) {
                 self.schema = null;
                 console.log("Updating source file");
                 // Generate the parse-side: runtime import + a lazy View class per schema.
-                const runtimeImport = `import { makeView as __JSONmakeView, parse as __JSONparse, parseStructArray as __JSONparseArrV, LEAF as __JSONLEAF, PRIM as __JSONPRIM } from "./wasm/runtime.js";`;
+                let runtimeImport = `import { makeView as __JSONmakeView, parse as __JSONparse, parseStructArray as __JSONparseArrV, LEAF as __JSONLEAF, PRIM as __JSONPRIM } from "./wasm/runtime.js";`;
+                if (self.schemas.some((s) => s.eager))
+                    runtimeImport += `\nimport { makeEagerView as __JSONmakeEagerView, parseEager as __JSONparseEager, parseEagerArrViews as __JSONparseEagerArr } from "./wasm/eager-rt.js";`;
                 const views = self.schemas.map((s) => genView(s, self.schemas)).join("\n");
                 const genStatements = ts
                     .createSourceFile("__jsonty_gen.ts", runtimeImport + "\n" + views, ts.ScriptTarget.Latest, /*setParentNodes*/ true, ts.ScriptKind.JS)
@@ -350,5 +359,6 @@ function genView(schema, all) {
         fields.push(`${JSON.stringify(m.name)}: ${spec}`);
         idx++;
     }
-    return `const __View_${schema.name} = __JSONmakeView([${keys.join(", ")}], [${childSids.join(", ")}], {${fields.join(", ")}}, ${JSON.stringify(schema.name)});`;
+    const factory = schema.eager ? "__JSONmakeEagerView" : "__JSONmakeView";
+    return `const __View_${schema.name} = ${factory}([${keys.join(", ")}], [${childSids.join(", ")}], {${fields.join(", ")}}, ${JSON.stringify(schema.name)});`;
 }
