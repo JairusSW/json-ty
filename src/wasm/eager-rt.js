@@ -39,42 +39,44 @@ function writeInput(input) {
 }
 
 // table = [count u32][M u32] then count*M 8-byte slots
-const tcount = (region) => u32[region >>> 2];
-const tM = (region) => u32[(region >>> 2) + 1];
-function numAt(region, row, f) { return f64[((region + 8) >>> 3) + row * tM(region) + f]; }
-function boolAt(region, row, f) { return f64[((region + 8) >>> 3) + row * tM(region) + f] !== 0; }
-function ptrAt(region, row, f) { return u32[((region + 8) >>> 2) + (row * tM(region) + f) * 2]; }
-function strAt(region, row, f) {
-  const i = ((region + 8) >>> 2) + (row * tM(region) + f) * 2;
-  const off = u32[i], len = u32[i + 1];
+function readStrAt(j) {
+  const off = u32[j], len = u32[j + 1];
   return asciiSource !== null ? asciiSource.slice(off, off + len) : nbuf.toString("utf8", SRC + off, SRC + off + len);
 }
 
 // Build an eager view class from the same {prop:[kind,idx,child?]} field spec
-// the transform emits for the lazy makeView.
+// the transform emits for the lazy makeView. The view caches its row base
+// (f64/u32 indices) at construction, so getters are a single typed-array read.
 const EVIEWS = {};
 export function makeEagerView(keys, childSids, fields, name) {
   const sid = registerSchema(keys, childSids);
-  class V { constructor(region, row = 0) { this._r = region; this._row = row; } }
+  class V {
+    constructor(region, row = 0) {
+      const M = u32[(region >>> 2) + 1];
+      this._fb = ((region + 8) >>> 3) + row * M; // f64 base index of this row
+      this._ub = ((region + 8) >>> 2) + row * M * 2; // u32 base index of this row
+    }
+  }
   V.__sid = sid;
   for (const prop in fields) {
     const [kind, i, child] = fields[prop];
     let get;
     switch (kind) {
-      case "num": get = function () { return numAt(this._r, this._row, i); }; break;
-      case "bool": get = function () { return boolAt(this._r, this._row, i); }; break;
-      case "str": get = function () { return strAt(this._r, this._row, i); }; break;
-      case "child": get = function () { const p = ptrAt(this._r, this._row, i); return p ? new EVIEWS[child](p, 0) : null; }; break;
-      case "structArray": get = function () { const p = ptrAt(this._r, this._row, i); const n = tcount(p), C = EVIEWS[child], o = new Array(n); for (let k = 0; k < n; k++) o[k] = new C(p, k); return o; }; break;
-      case "numArray": get = function () { const p = ptrAt(this._r, this._row, i); const n = tcount(p), o = new Array(n); for (let k = 0; k < n; k++) o[k] = numAt(p, k, 0); return o; }; break;
-      case "strArray": get = function () { const p = ptrAt(this._r, this._row, i); const n = tcount(p), o = new Array(n); for (let k = 0; k < n; k++) o[k] = strAt(p, k, 0); return o; }; break;
-      default: get = function () { return strAt(this._r, this._row, i); };
+      case "num": get = function () { return f64[this._fb + i]; }; break;
+      case "bool": get = function () { return f64[this._fb + i] !== 0; }; break;
+      case "str": get = function () { return readStrAt(this._ub + i * 2); }; break;
+      case "child": get = function () { const p = u32[this._ub + i * 2]; return p ? new EVIEWS[child](p, 0) : null; }; break;
+      case "structArray": get = function () { const p = u32[this._ub + i * 2], n = u32[p >>> 2], C = EVIEWS[child], o = new Array(n); for (let k = 0; k < n; k++) o[k] = new C(p, k); return o; }; break;
+      case "numArray": get = function () { const p = u32[this._ub + i * 2], n = u32[p >>> 2], fb = (p + 8) >>> 3, o = new Array(n); for (let k = 0; k < n; k++) o[k] = f64[fb + k]; return o; }; break;
+      case "strArray": get = function () { const p = u32[this._ub + i * 2], n = u32[p >>> 2], ub = (p + 8) >>> 2, o = new Array(n); for (let k = 0; k < n; k++) o[k] = readStrAt(ub + k * 2); return o; }; break;
+      default: get = function () { return readStrAt(this._ub + i * 2); };
     }
     Object.defineProperty(V.prototype, prop, { get, enumerable: true });
   }
   EVIEWS[name] = V;
   return V;
 }
+const tcount = (region) => u32[region >>> 2];
 
 // JSON.parse<T> (eager): one record table -> a view at row 0.
 export function parseEager(sid, Ctor, input) { return new Ctor(ex.parseEagerObject(sid, writeInput(input)) >>> 0, 0); }
