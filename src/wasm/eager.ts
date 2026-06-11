@@ -312,6 +312,50 @@ function primTable(p0: i32, end: i32): usize {
   return region;
 }
 
+// End byte offset of the value starting at vs (after ws). Works for any type.
+function valueEnd(vs: i32, end: i32): i32 {
+  const base = changetype<usize>(SRC);
+  const b = load<u8>(base + vs);
+  if (b == QUOTE) return skipString(vs + 1, end) + 1;
+  if (b == LBRACE || b == LBRACK) return scanComposite(vs, end);
+  let ne = vs;
+  while (ne < end) { const c = load<u8>(base + ne); if (c == COMMA || c == RBRACE || c == RBRACK || isWs(c)) break; ne++; }
+  return ne;
+}
+
+// Mutable-doc support: record each top-level field's VALUE byte span (off,len)
+// in the source -> [M][2 u32]. JS edits spans and re-emits without rebuilding.
+export function spanObject(sid: i32, len: i32): usize {
+  bump = 0;
+  const base = changetype<usize>(SRC);
+  const m = schemaCount[sid];
+  const region = changetype<usize>(ARENA);
+  for (let f = 0; f < m; f++) { store<u32>(region + (<usize>f << 3), 0); store<u32>(region + (<usize>f << 3) + 4, 0); }
+  let i = 0;
+  while (i < len && isWs(load<u8>(base + i))) i++;
+  i++; // '{'
+  while (i < len) {
+    while (i < len && isWs(load<u8>(base + i))) i++;
+    if (load<u8>(base + i) == RBRACE) { i++; break; }
+    if (load<u8>(base + i) != QUOTE) break;
+    const ks = i + 1, ke = skipString(ks, len);
+    i = ke + 1;
+    while (i < len && isWs(load<u8>(base + i))) i++;
+    if (load<u8>(base + i) != COLON) break;
+    i++;
+    while (i < len && isWs(load<u8>(base + i))) i++;
+    const vs = i, ve = valueEnd(vs, len);
+    const fi = matchKey(sid, ks, ke - ks);
+    if (fi >= 0) { store<u32>(region + (<usize>fi << 3), <u32>vs); store<u32>(region + (<usize>fi << 3) + 4, <u32>(ve - vs)); }
+    i = ve;
+    while (i < len && isWs(load<u8>(base + i))) i++;
+    if (load<u8>(base + i) == COMMA) { i++; continue; }
+    if (load<u8>(base + i) == RBRACE) { i++; break; }
+    break;
+  }
+  return region;
+}
+
 // ---- exports -------------------------------------------------------------
 export function parseEagerObject(sid: i32, len: i32): usize { bump = 0; tsp = 0; return objTable(sid, 0, len); }
 export function parseEagerArray(elemSid: i32, len: i32): usize { bump = 0; tsp = 0; return arrTable(elemSid, 0, len); }

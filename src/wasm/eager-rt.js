@@ -22,6 +22,34 @@ export const LEAF = -2, PRIM = -1;
 let asciiSource = null;
 
 export function resetSchemas() { ex.resetSchemas(); }
+
+// Mutable in-place document: scan a top-level object's field value spans once,
+// then patch fields and re-emit by splicing the source — without parsing the
+// whole doc into JS objects or re-stringifying it. ASCII docs (byte==char).
+const DOC_SCHEMAS = new Map();
+export function parseDoc(keys, json) {
+  const ck = keys.join("\0");
+  let sid = DOC_SCHEMAS.get(ck);
+  if (sid === undefined) { sid = registerSchema(keys); DOC_SCHEMAS.set(ck, sid); } // memoize (flat schema, all leaf)
+  const region = ex.spanObject(sid, writeInput(json)) >>> 0;
+  const base = region >>> 2;
+  const spans = keys.map((_, f) => [u32[base + f * 2], u32[base + f * 2 + 1]]);
+  const idx = new Map(keys.map((k, i) => [k, i]));
+  const edits = new Map();
+  return {
+    keys,
+    raw(field) { const [o, l] = spans[idx.get(field)]; return json.slice(o, o + l); }, // raw JSON text of the value
+    get(field) { const s = edits.has(idx.get(field)) ? edits.get(idx.get(field)) : this.raw(field); return JSON.parse(s); },
+    set(field, value) { edits.set(idx.get(field), JSON.stringify(value)); return this; },
+    emit() {
+      if (!edits.size) return json;
+      const es = [...edits.keys()].map((f) => ({ o: spans[f][0], l: spans[f][1], t: edits.get(f) })).sort((a, b) => a.o - b.o);
+      let out = "", pos = 0;
+      for (const e of es) { out += json.slice(pos, e.o) + e.t; pos = e.o + e.l; }
+      return out + json.slice(pos);
+    },
+  };
+}
 export function registerSchema(keys, childSids = []) {
   let p = SRC;
   for (let f = 0; f < keys.length; f++) {
