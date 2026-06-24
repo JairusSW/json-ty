@@ -30,7 +30,7 @@ you don't read) without the lazy engine's per-access allocation tax.
 ### One parse, three read facets (the whole point)
 
 ```
-                       ┌─ object view   JSON.parse<T>(x).field        (getters)
+                       ┌─ object view    JSON.parse<T>(x).field        (getters)
 flat tables in WASM ───┼─ columnar       parseColumnar(x).numCol(i)    (Float64Array)
    (one parse)         └─ mutable doc    parseDoc(x).set(k,v).emit()   (span splice)
 ```

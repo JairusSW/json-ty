@@ -19,6 +19,10 @@ declare namespace __AdaptedExports {
    */
   export function reserve(n: number): number;
   /**
+   * src/wasm/parser/resetSchemas
+   */
+  export function resetSchemas(): void;
+  /**
    * src/wasm/parser/registerSchema
    * @param descPtr `usize`
    * @param count `i32`
