@@ -1,15 +1,14 @@
 {
   "compilerOptions": {
-    "plugins": [{ "transform": "./transform/" }],
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "allowJs": true,
     "target": "esnext",
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
+    "types": ["node"],
     "skipLibCheck": true
-  }
+  },
+  "include": ["src/index.ts"]
 }

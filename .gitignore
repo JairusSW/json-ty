@@ -1,10 +1,12 @@
 node_modules
 *.lock
 pnpm-lock.yaml
-package-lock.json
 .vscode
 logs
 as-tral
 *.lockb
 .vscode/
 build/
+src/playground.js
+src/wasm/eager.js
+src/wasm/eager.d.ts

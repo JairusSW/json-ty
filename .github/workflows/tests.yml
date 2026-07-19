@@ -1,25 +1,36 @@
-name: Bun/Wasmtime CI
+name: Tests
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  test:
+    name: Node ${{ matrix.node }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.15, 24]
 
     steps:
-      - name: Checkout the repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Wasmtime
-        run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
-          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Install Dependencies
-        run: bun install
+      - name: Typecheck
+        run: npm run typecheck
 
-      - name: Run Tests
-        run: bash ./run-tests.sh
+      - name: Test SIMD and scalar paths
+        run: npm run test:all

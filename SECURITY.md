@@ -1,24 +1,27 @@
 # Security Policy
 
-## Reporting a Vulnerability
+## Supported versions
 
-If you believe you have discovered a security vulnerability in this project, please report it as soon as possible. Follow the steps below to report a vulnerability:
+json-ty is currently an early `0.0.0` preview installed from GitHub. Security
+fixes are applied to the latest `main` revision; older commits are not supported
+as separate release lines.
 
-1. **Report via GitHub Issues**: Please submit your vulnerability report via the [GitHub Issues](https://github.com/JairusSW/json-as/issues) page. If you prefer, you can also send an email directly to [me@jairus.dev](mailto:me@jairus.dev).
+## Reporting a vulnerability
 
-2. **Provide Details**: Include as much detail as possible, including the steps to reproduce, what you believe the impact is, and any suggested remediation if applicable.
+Please do not open a public issue for a vulnerability that could put users or
+their data at risk.
 
-3. **Acknowledgment**: Once your report is received, we will acknowledge it within 48 hours. You will then receive an update on the progress of the investigation and a timeline for a potential fix.
+Email [me@jairus.dev](mailto:me@jairus.dev) with:
 
-4. **Resolution Timeline**:
+- a minimal reproduction or malformed input;
+- affected commit and Node version;
+- expected and observed behavior;
+- potential impact;
+- any suggested fix or mitigation.
 
-   - Critical vulnerabilities will be prioritized, and we aim to issue a patch within 7 business days.
-   - Non-critical vulnerabilities will be evaluated and addressed in the next stable release.
-   - If the vulnerability is accepted, a fix will be issued, and a security advisory will be published.
-   - If the vulnerability is declined, you will be notified of the decision with an explanation.
+Reports will be acknowledged as soon as practical and handled privately until
+a fix or coordinated disclosure plan is ready. Credit will be given with the
+reporter's permission.
 
-5. **Confidentiality**: Please do not disclose the vulnerability to the public or other parties until the issue has been addressed. This helps ensure that users of the project are not at risk before a patch is available.
-
-6. **Credits**: If your report leads to a fix, we will credit your contribution in the release notes, if you are comfortable with that.
-
-Thank you for helping us keep this project secure!
+Memory-safety, stale-view, allocator, parser-boundary, generated-code injection,
+and malicious-schema issues are especially valuable to report.

@@ -1,0 +1,87 @@
+export const classicCorpora = [
+  {
+    key: "twitter",
+    label: "Twitter",
+    files: { pretty: "twitter.pretty.json", min: "twitter.min.json" },
+    expected: { statuses: 100 },
+    typed: null,
+    limitation: "TweetUser exceeds the bootstrap 32-field record bitmap and Status is recursive",
+  },
+  {
+    key: "canada",
+    label: "Canada",
+    files: { pretty: "canada.pretty.json", min: "canada.min.json" },
+    typed: "Canada",
+  },
+  {
+    key: "citm_catalog",
+    label: "CITM",
+    files: { pretty: "citm_catalog.pretty.json", min: "citm_catalog.min.json" },
+    expected: { performances: 243 },
+    typed: null,
+    limitation: "the root contains dynamic-key Map<string, T> fields",
+  },
+  {
+    key: "poet",
+    label: "Poet",
+    files: { pretty: "poet.pretty.json", min: "poet.min.json" },
+    expectedLength: 8934,
+    typed: "PoemArray",
+  },
+  {
+    key: "github_events",
+    label: "GitHub",
+    files: { pretty: "github_events.pretty.json", min: "github_events.min.json" },
+    expectedLength: 30,
+    typed: null,
+    limitation: "Forkee exceeds the bootstrap 32-field record bitmap",
+  },
+  {
+    key: "gsoc-2018",
+    label: "GSOC",
+    files: { pretty: "gsoc-2018.pretty.json", min: "gsoc-2018.min.json" },
+    expectedSize: 1264,
+    typed: null,
+    limitation: "the root is a dynamic-key Map<string, Org>",
+  },
+  {
+    key: "lottie",
+    label: "Lottie",
+    files: { pretty: "lottie.pretty.json", min: "lottie.min.json" },
+    expected: { layers: 23 },
+    typed: null,
+    limitation: "layer transforms, effects, and shapes require typed raw JSON slices",
+  },
+  {
+    key: "otfcc",
+    label: "otfcc",
+    files: { min: "otfcc.min.json" },
+    objPrettyAlias: true,
+    typed: null,
+    limitation: "the font tables require typed raw JSON slices",
+  },
+  {
+    key: "fgo",
+    label: "FGO",
+    files: { min: "fgo.min.json" },
+    objPrettyAlias: true,
+    expectedSize: 193,
+    typed: null,
+    limitation: "the root is Map<string, JSON.Raw>",
+  },
+];
+
+export const classicSeries = {
+  deserialize: [
+    ["native", "Built-in JSON (JS)"],
+    ["eager", "json-ty (eager/plain)"],
+    ["lazy", "json-ty (lazy view)"],
+    ["obj", "json-ty (JSON.Obj)"],
+  ],
+  serialize: [
+    ["native", "Built-in JSON (JS)"],
+    ["eager", "json-ty (eager path)"],
+    ["lazy", "json-ty (lazy view)"],
+    ["obj", "json-ty (JSON.Obj)"],
+  ],
+};
