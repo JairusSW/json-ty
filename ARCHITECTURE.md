@@ -1,269 +1,259 @@
-# json-ty architecture
+# Architecture
 
-A drop-in `JSON.parse<T>` / `JSON.stringify<T>` for TypeScript, backed by one
-schema-directed WASM parser that materializes JSON into **flat, pointer-linked
-tables** the JS side reads through typed arrays. Distilled from the
-`experiments/` findings into a single recommended implementation.
+## Pipeline
 
----
+The canonical build entry is the `json-ty/transform` ts-patch source
+transformer. It receives the TypeScript 6 `Program`, generates application
+artifacts synchronously before emit, and returns the ordinary per-file call
+transformer. AssemblyScript compilation runs in a child process only on a
+semantic-cache miss because TypeScript transformer hooks are synchronous.
+Subsequent ts-patch transforms continue normally in configured order.
+`json-tyc` calls the same generation and transformation primitives through an
+async standalone orchestration path.
 
-## 1. The decision
+The TypeScript analyzer is the authority for type identity and reachability.
+It discovers `json-ty` imports, decorated declarations, and typed calls, then
+normalizes them into schema IR version 5. Source paths are excluded from the
+semantic hash. AssemblyScript generation, host layouts, call rewriting, and
+serialization policy all consume this IR.
 
-**One core engine: the eager flat-table parser.** It was the broad winner across
-every experiment, and one buffer serves three read facets. The alternative — the
-lazy NaN-boxed/`decodeSlot` engine — is **dropped from the core**: its only
-advantage (reading a few fields of a huge doc) is narrow, and it *lost* full
-deserialize because every getter allocated a `{tag,off,len}` object + a memo
-`Map`. The eager engine beats it everywhere that matters and is far simpler.
+For each project, generation produces one Wasm module. Shared raw kernels are
+emitted once; records, array shapes, tuples, and union dispatch receive
+schema-specialized functions. The build uses the stub runtime, imported memory,
+SIMD, bulk memory, `-O3`, no assertions, and no generated loader glue.
 
-Critically, the eager core is still **on-demand where it counts**: it parses the
-*skeleton* (structure + numbers/bools) eagerly in one pass, but **strings stay as
-byte spans and nested values stay as pointers** — both are materialized only when
-a getter touches them. That gives the lazy vision's payoff (don't pay for strings
-you don't read) without the lazy engine's per-access allocation tax.
+The two backends share a canonical per-type plan, then dispatch through parallel
+type-emitter registries under `compiler/src/emit/assembly` and
+`compiler/src/emit/host`. Number, boolean, string, object, array/tuple, and union
+policy therefore has one explicit extension point on each side instead of being
+scattered through root-schema switches. The AssemblyScript emitters generate
+fixed-offset parse/write expressions; the host emitters generate fixed-mask
+accessors and specialized scalar/string setters. Composite mutation alone uses
+a shared cold helper.
 
-> Measured (full deserialize, read every field, vs native `JSON.parse`): small
-> 1.3–1.8×, medium 1.3–1.9×, large 1.1–1.3×; bulk numeric ~1.9×; serialize
-> ~1.1–1.5×. Partial reads are strictly cheaper (unread strings/children cost
-> nothing). 24,000 fuzz cases match native exactly.
+Typed call sites are rewritten to hygienically named imports of compact
+schema-specific host exports (`pN`/`sN`). The runtime object is imported only
+when a file also contains a dynamic or otherwise indirect call. Those host
+exports cache their matching Wasm function, so a normal typed parse or stringify
+crosses the boundary once without a runtime name lookup.
 
-### One parse, three read facets (the whole point)
+## AssemblyScript kernel library
 
-```
-                       ┌─ object view    JSON.parse<T>(x).field        (getters)
-flat tables in WASM ───┼─ columnar       parseColumnar(x).numCol(i)    (Float64Array)
-   (one parse)         └─ mutable doc    parseDoc(x).set(k,v).emit()   (span splice)
-```
+The maintained implementation lives under `src/raw/assembly`, divided into
+`deserialize/`, `serialize/`, and `layout/`. Null, boolean, number, string,
+array, struct, and dynamic JSON each have a dedicated module. The bounded UTF-8
+writer lives in `serialize/writer.ts`; the grammar/SIMD/SWAR scanner lives in
+`deserialize/scanner.ts`. Root-level `parser.ts`, `writer.ts`, and `dynamic.ts`
+are compatibility barrels only.
 
-All three read the *same* contiguous buffer; no re-parse to switch facets.
+Generated AssemblyScript is deliberately thin. It emits one root parse/write
+pair plus specialized record, array, tuple, and union functions for the API
+shape. Those functions retain packed field-key comparisons, constant offsets,
+ordered-object fast paths, and decorator policy, while calling the maintained
+type kernels for primitive syntax and storage. Kernel entry functions are
+`@inline`, and release WAT confirms they are folded into schema functions.
+This provides one tunable implementation of each JSON type without replacing
+schema specialization with a generic runtime dispatcher.
 
----
+## ABI and memory
 
-## 2. Public API
+JavaScript creates and imports `WebAssembly.Memory`. Normal parse/stringify uses
+one Wasm call. Additional results are returned in a 32-byte control header:
 
-```ts
-import { JSON } from "json-ty";
+| byte | u32 field |
+|---:|---|
+| 0 | status |
+| 4 | fault byte offset |
+| 8 | root relative offset |
+| 12 | document pointer |
+| 16 | document byte length |
+| 20 | output pointer |
+| 24 | output byte length |
+| 28 | required capacity |
 
-@json class Vec3   { x!: f64; y!: f64; z!: f64; }
-@json class Player { name!: string; age!: i32; pos!: Vec3 | null; tags!: string[]; }
+Memory is split into control, operation scratch, and persistent regions.
+Scratch is reset implicitly for every operation. Persistent blocks have an
+8-byte header and are managed by an address-sorted free list. Allocation splits
+large blocks; release coalesces adjacent blocks and rejects stale/double frees.
+The allocation bit is stored in the high bit of the block size. A last-in,
+first-out release with no intervening free blocks rewinds the bump pointer
+directly, avoiding free-list insertion and splitting for short-lived documents.
 
-const p = JSON.parse<Player>(bytesOrString);   // typed view; satisfies Player
-p.age;      // number — read straight from the buffer
-p.name;     // string — sliced/unescaped from its span on access (then cached)
-p.pos?.x;   // nested — child view via pointer, on access
-p.tags;     // string[] — materialized on access
+Typed documents use only relative 32-bit offsets, so a memory grow does not
+invalidate internal references. The Node/browser binding refreshes its Buffer,
+typed arrays, and DataView-equivalent access after growth.
 
-JSON.stringify<Player>(p);                     // pure-JS serialize (beats native)
-JSON.from(Player, { ... });                    // wrap a plain object for stringify
+## Document layout v5
 
-// Optional facets over the same engine (arrays of flat records):
-const df  = JSON.columns<Row>(jsonArray);      // df.numCol(i) -> Float64Array, df.sum(i), df.strCol(i)
-const doc = JSON.doc<Config>(jsonObject);      // doc.set("k", v).emit(); doc.get("k")
-```
+A document starts with a 16-byte header. Its root is a relative offset. A record
+contains `ceil(fieldCount / 32)` override/presence words followed by the same
+number of null words, then one aligned 8-byte slot per field. Records with
+non-string deferred fields append an equally wide lazy bitmap. Missing defaulted
+fields stay implicit: generated host getters and serializers read immutable
+schema constants rather than copying a default graph into every document.
+Primitive and recursively JSON-literal array/object initializers are retained.
+Composite defaults are cloned into a per-document host overlay on first access,
+so mutations never leak between parsed values. Exact compact default documents
+allocate a zero-override record without parsing individual fields. Generated
+code selects words and masks statically; the wide-schema regression compiles
+and round-trips 150 fields, including lazy fields 63 and 127.
 
-- `JSON.parse<T>(input: Uint8Array | string): T` — returns a `T`-typed view.
-  Bytes input is the sweet spot (no transcode); a JS string is bulk-copied in.
-- `JSON.parse<T[]>(input): T[]` — array of row-views over one table.
-- Decorators carry over (`@alias` `@omit` `@omitnull` …). There is **no
-  `@eager` / `@lazy` toggle** — the single engine already is eager-skeleton +
-  lazy-materialization.
+Primitive slots contain `f64`, `u32` booleans, or an 8-byte string reference.
+String references retain source spans where possible. Length high bits identify
+escaped data and arena-owned data. The first property read decodes and caches a
+JavaScript string.
 
----
+Array headers contain kind, length, relative data offset, and stride. Elements
+are scalar values, string references, record offsets, array offsets, union
+offset/tag pairs, or 16-byte tuple slots. Ordinary `T[]` values materialize to a
+real JS Array lazily. `JSON.Array<T>` retains a facade and an indexed mutation
+overlay.
 
-## 3. Wire format (the buffer the JS side reads)
+Top-level arrays are represented in the IR as root-array schemas. The byte
+bridge adds a private `{"value":...}` envelope so the same generated graph
+parser and writer remain authoritative, then exposes only the real array or
+facade and removes the envelope from output. Root arrays retain a hidden owner
+for mutation/lifetime tracking and have a best-effort finalizer in addition to
+explicit disposal.
 
-Every value level is a **contiguous table**, schema-directed so there are **no key
-spans** — field *i* lives at a fixed slot:
+Dynamic values use a 16-byte tagged slot for null, boolean, number, string,
+array, or object. Dynamic object entries store key/value references. Lookup is
+linear for small objects and receives a cached host Map for wide objects.
 
-```
-table  = [ count u32 ][ M u32 ]  then  count * M  slots        (8 bytes each, row-major)
-object = table with count = 1
-array of records (struct[]) = count = N
-primitive array (T[])       = M = 1, one element per row
-```
+## Parsing
 
-**Slot (8 bytes), interpreted by the field's statically-known kind:**
+Generated object parsers validate the complete UTF-8 JSON grammar, skip unknown
+values structurally, accept arbitrary property order, apply presence/null
+tracking and defaults, and retain string spans. SIMD accelerates ASCII/string
+classification while scalar logic owns boundary and escape validation.
+When SIMD is disabled, an 8-byte SWAR classifier feeds the same bounded scalar
+validator. The differential fuzz suite compiles and runs both artifacts.
 
-| kind            | encoding                                                              |
-|-----------------|----------------------------------------------------------------------|
-| number / bool   | raw `f64` (bool = 0.0 / 1.0)                                          |
-| string          | `off u32` (byte offset into source) · `len u32` with two flag bits   |
-| object / array  | `u32` **pointer** to the child table's region (0 = null)             |
-| null            | number/bool → `f64 NaN`; string → `len` null-bit; nested → ptr `0`   |
+Flat and nested records first try a canonical
+ordered-property tier. It compares packed `"key":` bytes and parses values
+without key scanning, dispatch, or whitespace calls. A second generated tier
+accepts absent fields and arbitrary whitespace while retaining declaration
+order. Reordered keys and unknown fields route to the general RFC parser. Any
+key/separator mismatch rolls graph
+allocation back, resets the record, and restarts at the fully validating
+arbitrary-order tier; malformed values never bypass errors. All generated
+homogeneous arrays parse in one pass into a bounded high-end scratch span, then
+flatten their exact slots into the low persistent arena. Scratch reservations
+nest in LIFO order, so primitive, record, union, and nested arrays avoid a full
+validation/count pass without leaving maximum-sized holes in the document.
+Tuples allocate their statically known slot count directly.
+Numeric/boolean-only records also avoid copying source bytes into a persistent
+document because no field can retain a source span.
 
-**String `len` high bits** (length itself is < 2²⁴, so the top bits are free):
-- bit 31 = **escaped** — the span contained a `\`; the reader runs one unescape
-  pass (`JSON.parse('"'+raw+'"')`). Clean strings skip it (pure slice).
-- bit 30 = **null** — the field was `null` (distinct from `""`).
+Flat primitive schemas wider than 32 fields split the canonical tier into
+monomorphic 32-field helpers. Each helper owns one bitmap word and returns one
+of three results: key/separator mismatch (restart in the keyed tier), fatal
+value failure (preserve the parser status), or the next cursor. This is real
+generated control-flow chunking—not layout-only metadata—and keeps very wide
+straight-line functions tractable for Binaryen.
 
-Nesting is **pointers, not inlining**: a nested object/array is its own table and
-the parent slot holds its region pointer — so navigation is a typed-array read,
-never a re-parse.
+Class lazy policy is resolved by the TypeScript analyzer after the reachable
+schema graph is complete. `none` is eager unless a field has `@lazy` or
+`JSON.Lazy<T>`; `all` defers every eligible field unless it has `@eager`; and
+`auto` uses structural parse cost to keep cheap scalars and tiny scalar records
+eager while deferring strings, collections, unions, and expensive records.
+Unknown-decorator, raw, codec, and omitted fields remain eager because their
+host policy must run without changing descriptor semantics.
 
-**Schema descriptor** (one `registerSchema` per `@json` class):
-`count × [ keyLen u32 ][ key bytes ][ childSid i32 ]`, where `childSid` is `-2`
-(leaf scalar/string), `-1` (primitive array), or a child schema id.
+Pure `@omitif` expressions are lowered by the analyzer into schema IR and
+emitted directly in the Wasm writer. The compiled subset is literals,
+non-nullable number/boolean field reads with compile-time primitive defaults,
+unary `!`/`+`/`-`, arithmetic, comparisons, and boolean operators. More general
+omit predicates remain a host-serialization concern; unknown decorator symbols
+are never consumed by the transform.
 
----
+During the initial parse, a deferred non-string slot contains the source-relative
+start and byte length instead of its final value. The parser validates JSON
+grammar but postpones schema conversion and arena allocation. Ordered minified
+input uses a dedicated no-whitespace structural scanner; the arbitrary-order
+fallback remains fully validating. On first JS access, one generated
+`materialize<Type>Field` call parses the exact retained range into the document's
+flat arena, overwrites the slot, and clears its bitmap bit. The document owns
+extra reserved capacity for these later allocations. Repeated reads do not cross
+the Wasm boundary. Untouched fields are copied raw by the generated serializer;
+setters clear the bit and discard the range. Strings already have source-span
+slots and use the existing first-read host decode cache.
 
-## 4. WASM engine (`src/wasm/eager.ts` → `eager.wasm`)
+The number lexer enforces JSON syntax. Common exact values use a Clinger path;
+four fractional UTF-8 digits are folded at once with the byte-lane version of
+json-as's pair-multiply SWAR kernel, and larger significands in the useful
+exponent window use an Eisel–Lemire path. Structural skip/count scans validate
+number grammar without redundantly converting the number.
+Ambiguous long/wide decimals call the raw-pointer `parseNumberSlow` host import,
+which delegates only that number to the engine's correctly rounded conversion.
+No AssemblyScript string is created.
 
-One prebuilt, committed `.wasm`; consumers never run `asc`. Built:
-`--runtime stub --enable simd --enable bulk-memory --bindings raw --exportRuntime -O3 --noAssert`.
+Node string input is scanned for lone UTF-16 surrogates. The rare case is
+rewritten to JSON `\\uXXXX` escapes before UTF-8 encoding, preserving native JSON
+semantics without changing the well-formed path. Raw Buffer/Uint8Array input is
+strictly UTF-8 validated. Because JavaScript strings are immutable, the Node
+binding keeps the most recent encoded JSON string resident in operation
+scratch. Repeated parsing of that value skips surrogate classification and
+UTF-8 encoding but still runs the complete Wasm parser and creates an
+independently releasable document. Buffer/Uint8Array ingress, root-envelope
+construction, and every scratch writer invalidate the resident input.
 
-### Memory
+## Serialization
 
-```
-SRC   StaticArray<u8>  (16 MB)   input bytes, written once per parse; stays resident
-ARENA StaticArray<u8>  (64 MB)   output tables; `bump` allocator, reset per parse
-TMP   StaticArray<u64> (1 M)     side-stack: buffers an array's records so siblings
-                                 stay contiguous while a nested child allocates in ARENA
-```
+The writer emits UTF-8 bytes into scratch. Exact i32/u32-valued TypeScript
+numbers use json-as's width ladder and digit-pair lookup ported directly to
+UTF-8. Other finite values use the xjb-as shortest binary64 formatter through a
+tiny UTF-16 ASCII scratch buffer which is compacted to UTF-8; non-finite numbers
+serialize as `null`.
 
-The **source stays resident** — string slots index it in place; only touched
-strings are ever materialized.
+An ordered minified parse whose reachable schema has no output-changing
+decorators marks its retained UTF-8 source only as a canonical candidate. The
+first serialization always runs the normal generated writer, then compares its
+output against the retained source with SIMD/word/scalar bounded equality. An
+exact match promotes the source to verified canonical; a mismatch permanently
+clears the candidate. Later unchanged serializations are one bounded
+`memory.copy`, including large flat numeric arrays. This preserves native
+lexical behavior for inputs such as `1.0` and `"\\u0061"` without giving up the
+round-trip fast path. Candidate/canonical bits share the source-length word and
+are masked by every length reader. Every scalar setter, nested setter,
+real-array overlay, and `JSON.Array` mutation clears both bits. Reordered,
+pretty, defaulted, host-managed, raw, codec, omit, omit-null, and omit-if inputs
+use the normal generated field writer.
 
-### Kernels (proven; reuse as-is)
+The binary64 writer formats into output headroom and narrows ASCII UTF-16 lanes
+with SIMD. Homogeneous number arrays reserve once and keep a local cursor,
+matching json-as's dedicated array-writer structure while emitting UTF-8.
 
-- `parseF64` — Clinger fast path (POW10 table; exact ≤ 2⁵³ mantissa, |exp| ≤ 22).
-- `skipString` — SIMD scan for `"`/`\` (`v128` 16-byte stride); sets the
-  **escape flag** when it passes a `\`.
-- `scanComposite` — depth scan to a matching `}`/`]` (skips quoted strings).
-- `matchKey` — **hybrid**: linear scan for ≤16-field schemas, O(1)
-  open-addressing **FNV hash** above (built in `registerSchema`). Big win for
-  wide objects without taxing small ones.
+The first serialization of an unchanged parsed view writes directly from its
+document. Its canonical string is then cached on the view or shared document
+state, making repeated `JSON.stringify` calls a constant-time lookup. Every
+supported scalar, string, array-facade, and nested mutation invalidates the
+cache. Mutated strings, real arrays, and nested overlays are lowered into the
+canonical flat ingress layout before the Wasm writer runs. Plain values use
+native JSON when schema-compatible and a schema-generated JavaScript writer
+when decorators or host-managed fields require it. This avoids paying a Wasm
+flattening cost where evidence says it loses.
 
-### Parse functions (recursion lives entirely in WASM)
+## Views and safety
 
-- `objTable(sid)` — single record; reserves M slots, then fills (children alloc
-  after, so the record stays contiguous).
-- `arrTable(elemSid)` — array of records; buffers rows in `TMP` so they stay
-  contiguous despite nested allocations, then one `memory.copy` into ARENA.
-  **Flat fast path:** element schemas with no sub-tables write straight to ARENA.
-- `primTable` — primitive array (`M = 1`).
-- `spanObject(sid)` — mutable-doc facet: records each top-level field's **value
-  byte span** `(off,len)` instead of its value (for `parseDoc`).
+View accessors are emitted as real schema-specific JavaScript classes. Primitive
+and string getters contain fixed bitmap masks and record offsets; composite
+materialization remains on a shared cold path. Composite roots and retained nested views
+share a document-state object so releasing the root invalidates every child.
+Real arrays are authoritative after materialization; the serializer observes
+their mutations. Class schemas may bind the generated view prototype above the
+user class prototype, preserving methods and `instanceof` without invoking the
+constructor.
 
-### Exports
+The default fast view keeps memory fields on the prototype. The enumerable
+compatibility mode installs present fields as own accessors and synchronizes
+optional adds/removals.
 
-```
-srcPtr() -> ptr                       // input write address
-registerSchema(descPtr, count) -> sid // descriptor above; builds keys + hash + flat flag
-resetSchemas()                        // free the fixed-size schema registry (reuse slots)
-parseEagerObject(sid, len) -> region  // JSON.parse<T>
-parseEagerArray(elemSid, len) -> region // JSON.parse<T[]>
-spanObject(sid, len) -> region        // JSON.doc
-memory
-```
+## Wasm audit
 
-**One WASM call per parse.** No JS callbacks during a parse — the per-call
-boundary is exactly what we avoid (measured: per-value crossings are the wall).
-
----
-
-## 5. JS runtime (`src/wasm/runtime.js`)
-
-Instantiate once; cache `u8`/`u32`/`f64`/`DataView`/`Buffer` views (re-grab after
-any `memory.grow`).
-
-- **`writeInput(input)`** — string → `Buffer.write(input, SRC, "utf8")` (Node,
-  ~55 GB/s); bytes → `u8.set`. Records `asciiSource` when the write was pure
-  ASCII (byteLen === input.length) to enable the slice-original fast path.
-- **`registerSchema(keys, childSids)`** — writes the descriptor via
-  `DataView.setUint32`/`setInt32` (unaligned-safe), returns the sid.
-- **View factory** (emitted target of the transform). Each view caches its row
-  base at construction so a getter is a single typed-array read:
-
-  ```js
-  class V {
-    constructor(region, row = 0) {
-      const M = u32[(region >>> 2) + 1];
-      this._fb = ((region + 8) >>> 3) + row * M;       // f64 base index
-      this._ub = ((region + 8) >>> 2) + row * M * 2;   // u32 base index
-    }
-    get age()  { return f64[this._fb + 1]; }                          // number
-    get name() { return readStr(this._ub + 2*2); }                   // string span
-    get pos()  { const p = u32[this._ub + 3*2]; return p ? new V_Vec3(p) : null; } // child ptr
-  }
-  ```
-- **`readStr(j)`** — `off = u32[j]`, `raw = u32[j+1]`; if null-bit → `null`;
-  `s = asciiSource ? asciiSource.slice(off,off+len) : nbuf.toString("utf8", SRC+off, …)`;
-  if escape-bit → `JSON.parse('"'+s+'"')`. Strings are cached per field on the view.
-- **Columnar facet** — `parseColumnar(sid, input)` over `parseEagerArray`:
-  `numCol(i)` copies a strided column into a packed `Float64Array`; `sum`/
-  `countWhere` stride in place; `strCol`. (Value = parse speed + zero-copy
-  typed-array interop; **not** faster than V8 at scalar JS loops.)
-- **Mutable-doc facet** — `parseDoc(keys, json)` over `spanObject`: `set(k,v)`
-  records an edit; `emit()` splices the source `[prefix][newValue][suffix]`.
-  **Splice the byte `Buffer`, not the JS string**, so UTF-8 stays correct (byte
-  spans ≠ char offsets); decode once at the end.
-
----
-
-## 6. Serialize — pure JS (unchanged, `src/serialize/`)
-
-WASM can't help: getting a JS object *into* WASM is per-field and loses, and the
-existing codegen already beats native `JSON.stringify` (~1.1–1.5×). The transform
-keeps emitting `__JSON_SERIALIZE` per class. `JSON.stringify<T>` / `JSON.from`
-stay JS-only.
-
----
-
-## 7. The `@json` transform (`transform/`)
-
-Per `@json class T`, the transform (AST, build-time) emits:
-
-1. `registerSchema` call → `__sid`, and a **view factory call** with the field
-   spec `{ prop: [kind, slotIndex, childName?] }` (kinds: `num/bool/str/child/
-   structArray/numArray/strArray`) + `childSids`. Data-only codegen (no `this`,
-   synthesized nodes at pos/end −1 — see the existing transform).
-2. Rewrites `JSON.parse<T>(x)` → `parseEager(__View_T.__sid, __View_T, x)` and
-   `JSON.parse<T[]>(x)` → `parseEagerArrViews(...)`.
-3. Null-aware getters **only** for fields typed `T | null` (check NaN / null-bit /
-   ptr 0); non-nullable fields get the fast path.
-4. Serialize codegen, unchanged.
-
----
-
-## 8. Memory & lifecycle
-
-- One shared WASM instance per module. Each parse resets `bump` (no GC churn) and
-  reuses `SRC` — so **a new parse invalidates the previous parse's views**
-  (documented; detach via `structuredClone`/`.toJSON()` if you must keep one).
-- `resetSchemas()` frees the fixed registry (256 schemas / 4096 fields / 64 KB
-  keys); call it if an app registers schemas dynamically in a loop.
-- Views never escape to the WASM heap; they hold only integer base indices + the
-  shared typed-array views.
-
----
-
-## 9. Correctness
-
-- **Fuzzer** (`experiments/fuzz`): random schemas + JSON (escapes, unicode/emoji,
-  edge numbers, deep nesting) diffed against native, full recursive read. Keep it
-  as the regression gate — it already caught the eager string-unescape bug.
-  Target: 0 diffs over ≥10⁴ cases on every change.
-- **Null**: must be encoded distinctly (NaN / len null-bit / ptr 0) — do **not**
-  ship the zero-bytes shortcut (it conflates `null` and `""`). The transform
-  knows nullability from the type, so the cost lands only on `T | null` fields.
-
----
-
-## 10. Scope
-
-- **In:** top-level object & array-of-records; `number/i32/f64/bool/string`
-  fields; nested objects; `number[]`/`int[]`/`string[]`; struct arrays; lazy
-  string/child materialization; columnar + mutable-doc facets; pure-JS serialize.
-- **Deferred (only if a real workload demands it):**
-  - *Byte-streaming emit* (`writev` of `[prefix][value][suffix]` from the buffer)
-    — the path past mutable-doc's O(size) JS-string wall.
-  - *Skip-scan partial mode* — for reading a couple of fields out of multi-MB
-    docs, a variant that scans only to the requested field. The current engine
-    parses the whole skeleton (still ~1.3–1.9× native), so add this only if that
-    access pattern dominates.
-  - *Browser glue* — `encodeInto`/`TextDecoder` in place of `Buffer` (the engine
-    is unchanged; only `writeInput`/`readStr` swap paths).
-- **Non-goal:** beating native at scalar JS `for`-loops over already-parsed data —
-  V8's monomorphic object access already wins that; json-ty's edge is parse
-  throughput, lazy string materialization, typed-array interop, and near-zero
-  allocation.
+The representative generated artifact imports only `env.memory` and
+`env.parseNumberSlow`. `wasm-objdump` shows no `__new`, `__pin`, `__unpin`,
+`__collect`, managed Array, or managed String runtime exports. Schema values are
+never represented as AssemblyScript managed objects. A contract test also
+wraps the cached typed and dynamic exports and asserts exactly one Wasm entry
+per normal parse or stringify operation.

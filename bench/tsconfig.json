@@ -1,7 +1,6 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "plugins": [{ "transform": "../transform/" }],
     "outDir": "../build",
     "rootDir": ".",
     "noEmitOnError": false,

@@ -1,60 +1,145 @@
-/// <reference path="./index.d.ts" />
-import { serializeArray, serializeBool, serializeFloat, serializeInteger, serializeString } from "./exports.js";
+/** Public TypeScript surface. Optimized calls are rewritten by json-tyc. */
 
-/**
- * JSON Encoder/Decoder for TypeScript
- */
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+const rawJsonBrand = Symbol.for("json-ty.raw");
+
 export namespace JSON {
-  export function from<T extends object>(cls: { new(): T }, obj: Partial<T>): T {
-    // @ts-ignore
-    const o = cls.__JSON_INSTANTIATE();
-    Object.assign(o, obj);
-    return o;
+  /** Transparent type marker for a field parsed on first access. */
+  export type Lazy<T> = T;
+  export interface Value {
+    readonly type: "null" | "boolean" | "number" | "string" | "array" | "object" | "invalid";
+    readonly value: unknown;
+    toJS(): unknown;
+    stringify(): string;
+    dispose(): void;
   }
-  /**
-   * Serializes valid JSON data
-   * ```js
-   * JSON.stringify<T>(data)
-   * ```
-   * @param data T
-   * @returns string
-   */
-  export function stringify<T>(data: T): string {
-    switch (typeof data) {
-      case "string":
-        return serializeString(data);
-      case "boolean":
-        return serializeBool(data);
-      case "number":
-        return serializeFloat(data);
-      case "bigint":
-        return serializeInteger(data);
-      case "object":
-        if (data === null) return "null";
-        if (Array.isArray(data)) return serializeArray(data);
-        const ctor = (data as any)?.constructor;
-        // console.log("ctor: ", ctor?.__JSON_SERIALIZE, data)
+  export interface Obj extends Value {
+    readonly size: number;
+    get(key: string): Value | undefined;
+    has(key: string): boolean;
+    keys(): IterableIterator<string>;
+    entries(): IterableIterator<[string, Value]>;
+    toObject(): JsonObject;
+  }
+  export interface Arr extends Value, Iterable<Value> {
+    readonly length: number;
+    at(index: number): Value | undefined;
+    values(): IterableIterator<Value>;
+    toArray(): JsonValue[];
+  }
 
-        if (ctor && ctor.__JSON_SERIALIZE) {
-          // @ts-ignore
-          return ctor.__JSON_SERIALIZE(data);
-        }
-        break;
+  /** Opt-in memory-backed array contract returned for `JSON.Array<T>`. */
+  export interface Array<T> extends Iterable<T> {
+    readonly length: number;
+    at(index: number): T | undefined;
+    set(index: number, value: T): this;
+    values(): IterableIterator<T>;
+    toArray(): T[];
+    dispose(): void;
+  }
+
+  /** Marks already-encoded JSON for schemas that explicitly allow raw spans. */
+  export class Raw {
+    readonly value: string;
+    readonly [rawJsonBrand] = true;
+    constructor(value: string) {
+      globalThis.JSON.parse(value);
+      this.value = value;
     }
-    throw new Error(`Could not serialize data of type '${typeof data}'. Make sure to add the correct decorators to classes.`);
+    toString(): string {
+      return this.value;
+    }
+  }
+
+  export function from<T extends object>(constructor: new () => T, value: Partial<T>): T {
+    return Object.assign(new constructor(), value);
   }
 
   /**
-   * Parses valid JSON strings into their original format
-   * ```js
-   * JSON.parse<T>(data)
-   * ```
-   * @param data string
-   * @returns T
+   * Erased schema marker for interfaces and type aliases, which cannot carry
+   * TypeScript decorators. json-tyc removes this call from emitted code.
    */
-  export function parse<T>(data: string, cls: { new(): T } | undefined = undefined): T {
-    /*if (!cls) */return globalThis.JSON.parse(data) as T;
-    // return cls.__JSON_DESERIALIZE()
-    // throw new Error(`Could not deserialize data ${data}. Make sure to add the correct decorators to classes.`);
+  export function schema<T>(): void {}
+
+  /** Native-correct fallback when a call is not transformed by json-tyc. */
+  export function parse<T>(data: string | Uint8Array): T {
+    const source = typeof data === "string" ? data : new TextDecoder().decode(data);
+    return globalThis.JSON.parse(source) as T;
   }
+
+  /** Native-correct fallback when a call is not transformed by json-tyc. */
+  export function stringify<T>(data: T): string | undefined {
+    return globalThis.JSON.stringify(data);
+  }
+
+  /** Release a generated memory-backed view. Plain values are a no-op. */
+  export function dispose(value: unknown): void {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) return;
+    const method = (value as { dispose?: unknown }).dispose;
+    if (typeof method === "function") method.call(value);
+  }
+}
+
+export type ClassDecoratorTarget<T = object> = abstract new (...arguments_: never[]) => T;
+export type OmitPredicate<T> = (self: T) => boolean;
+export type LazyMode = "none" | "auto" | "all";
+export interface JsonOptions {
+  lazy?: LazyMode;
+}
+export type LazyClassOptions = { mode: LazyMode } | { none: true } | { auto: true } | { all: true };
+
+export function json<T extends Function>(target: T): T;
+export function json(): <T extends Function>(target: T) => T;
+export function json(_options: JsonOptions): <T extends Function>(target: T) => T;
+export function json<T extends Function>(targetOrOptions?: T | JsonOptions): T | (<U extends Function>(value: U) => U) {
+  return typeof targetOrOptions === "function" ? targetOrOptions : (value) => value;
+}
+
+export const serializable = json;
+
+function propertyMarker(): void {}
+
+export function alias(_name: string): PropertyDecorator {
+  return propertyMarker;
+}
+export function omit(_target: object, _key: string | symbol): void;
+export function omit(): PropertyDecorator;
+export function omit(..._arguments: unknown[]): void | PropertyDecorator {
+  return _arguments.length >= 2 ? undefined : propertyMarker;
+}
+export function omitnull(_target: object, _key: string | symbol): void;
+export function omitnull(): PropertyDecorator;
+export function omitnull(..._arguments: unknown[]): void | PropertyDecorator {
+  return _arguments.length >= 2 ? undefined : propertyMarker;
+}
+export function optional(_target: object, _key: string | symbol): void;
+export function optional(): PropertyDecorator;
+export function optional(..._arguments: unknown[]): void | PropertyDecorator {
+  return _arguments.length >= 2 ? undefined : propertyMarker;
+}
+export function lazy(_target: object, _key: string | symbol): void;
+export function lazy(): PropertyDecorator;
+export function lazy(_mode: LazyMode | LazyClassOptions): ClassDecorator;
+export function lazy(..._arguments: unknown[]): void | PropertyDecorator | ClassDecorator {
+  return _arguments.length >= 2 ? undefined : propertyMarker;
+}
+export function eager(_target: object, _key: string | symbol): void;
+export function eager(): PropertyDecorator;
+export function eager(..._arguments: unknown[]): void | PropertyDecorator {
+  return _arguments.length >= 2 ? undefined : propertyMarker;
+}
+export function raw(_target: object, _key: string | symbol): void;
+export function raw(): PropertyDecorator;
+export function raw(..._arguments: unknown[]): void | PropertyDecorator {
+  return _arguments.length >= 2 ? undefined : propertyMarker;
+}
+export function omitif<T>(_predicate: OmitPredicate<T> | string): PropertyDecorator {
+  return propertyMarker;
+}
+export function codec(_implementation: unknown): PropertyDecorator {
+  return propertyMarker;
 }

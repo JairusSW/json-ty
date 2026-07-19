@@ -1,63 +1,55 @@
-/// <reference path="./index.d.ts" />
-import { serializeArray, serializeBool, serializeFloat, serializeInteger, serializeString } from "./exports.js";
-/**
- * JSON Encoder/Decoder for TypeScript
- */
-export var JSON;
-(function (JSON) {
-    function from(cls, obj) {
-        // @ts-ignore
-        const o = cls.__JSON_INSTANTIATE();
-        Object.assign(o, obj);
-        return o;
+export const JSON = {
+  Raw: class Raw {
+    [Symbol.for("json-ty.raw")] = true;
+    constructor(value) {
+      globalThis.JSON.parse(value);
+      this.value = value;
     }
-    JSON.from = from;
-    /**
-     * Serializes valid JSON data
-     * ```js
-     * JSON.stringify<T>(data)
-     * ```
-     * @param data T
-     * @returns string
-     */
-    function stringify(data) {
-        switch (typeof data) {
-            case "string":
-                return serializeString(data);
-            case "boolean":
-                return serializeBool(data);
-            case "number":
-                return serializeFloat(data);
-            case "bigint":
-                return serializeInteger(data);
-            case "object":
-                if (data === null)
-                    return "null";
-                if (Array.isArray(data))
-                    return serializeArray(data);
-                const ctor = data?.constructor;
-                // console.log("ctor: ", ctor?.__JSON_SERIALIZE, data)
-                if (ctor && ctor.__JSON_SERIALIZE) {
-                    // @ts-ignore
-                    return ctor.__JSON_SERIALIZE(data);
-                }
-                break;
-        }
-        throw new Error(`Could not serialize data of type '${typeof data}'. Make sure to add the correct decorators to classes.`);
+    toString() {
+      return this.value;
     }
-    JSON.stringify = stringify;
-    /**
-     * Parses valid JSON strings into their original format
-     * ```js
-     * JSON.parse<T>(data)
-     * ```
-     * @param data string
-     * @returns T
-     */
-    function parse(data, cls = undefined) {
-        /*if (!cls) */ return globalThis.JSON.parse(data);
-        // return cls.__JSON_DESERIALIZE()
-        // throw new Error(`Could not deserialize data ${data}. Make sure to add the correct decorators to classes.`);
-    }
-    JSON.parse = parse;
-})(JSON || (JSON = {}));
+  },
+  from(constructor, value) {
+    return Object.assign(new constructor(), value);
+  },
+  schema() {},
+  parse(data) {
+    const source = typeof data === "string" ? data : new TextDecoder().decode(data);
+    return globalThis.JSON.parse(source);
+  },
+  stringify(data) {
+    return globalThis.JSON.stringify(data);
+  },
+  dispose(value) {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) return;
+    const method = value.dispose;
+    if (typeof method === "function") method.call(value);
+  },
+};
+
+export function json(targetOrOptions) {
+  return typeof targetOrOptions === "function" ? targetOrOptions : ((value) => value);
+}
+export const serializable = json;
+const propertyMarker = () => {};
+export const alias = () => propertyMarker;
+export function omit(...args) {
+  return args.length >= 2 ? undefined : propertyMarker;
+}
+export function omitnull(...args) {
+  return args.length >= 2 ? undefined : propertyMarker;
+}
+export function optional(...args) {
+  return args.length >= 2 ? undefined : propertyMarker;
+}
+export function lazy(...args) {
+  return args.length >= 2 ? undefined : propertyMarker;
+}
+export function eager(...args) {
+  return args.length >= 2 ? undefined : propertyMarker;
+}
+export function raw(...args) {
+  return args.length >= 2 ? undefined : propertyMarker;
+}
+export const omitif = () => propertyMarker;
+export const codec = () => propertyMarker;

@@ -1,17 +1,81 @@
 {
   "name": "json-ty",
   "version": "0.0.0",
-  "author": "Jairus Tanaka",
+  "author": "Jairus Tanaka <me@jairus.dev>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JairusSW/json-ty.git"
   },
-  "main": "transform/lib/index.js",
+  "main": "src/index.js",
+  "types": "src/index.ts",
+  "description": "Schema-specialized JSON.parse and JSON.stringify for TypeScript, generated as raw UTF-8 WebAssembly",
+  "funding": "https://github.com/sponsors/JairusSW",
+  "files": [
+    "src/index.js",
+    "src/index.ts",
+    "src/raw/assembly/",
+    "src/raw/index.js",
+    "src/raw/index.d.ts",
+    "src/raw/node-binding.js",
+    "src/raw/browser-binding.js",
+    "src/raw/browser-binding.d.ts",
+    "compiler/lib/",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md",
+    "CONTRIBUTORS.md",
+    "SECURITY.md",
+    "CODE_OF_CONDUCT.md",
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md",
+    "bench/README.md",
+    "benchmark/charts/",
+    "benchmark/results/core-port-2026-07-18.md",
+    "ARCHITECTURE.md",
+    "FEATURE_MATRIX.md",
+    "PLAN.md"
+  ],
+  "engines": {
+    "node": ">=22.15"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.js"
+    },
+    "./raw": {
+      "types": "./src/raw/index.d.ts",
+      "import": "./src/raw/index.js"
+    },
+    "./browser": {
+      "types": "./src/raw/browser-binding.d.ts",
+      "import": "./src/raw/browser-binding.js"
+    },
+    "./compiler": {
+      "types": "./compiler/lib/index.d.ts",
+      "import": "./compiler/lib/index.js"
+    },
+    "./transform": {
+      "types": "./compiler/lib/ts-patch.d.ts",
+      "import": "./compiler/lib/ts-patch.js",
+      "default": "./compiler/lib/ts-patch.js"
+    }
+  },
+  "bin": {
+    "json-tyc": "./compiler/lib/cli.js"
+  },
+  "dependencies": {
+    "assemblyscript": "^0.28.2",
+    "ts-patch": "^4.0.1",
+    "xjb-as": "^0.1.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=6.0.2 <7"
+  },
   "devDependencies": {
     "@assemblyscript/wasi-shim": "^0.1.0",
     "@types/benchmark": "^2.1.5",
     "@types/node": "^24.0.8",
-    "assemblyscript": "^0.28.2",
     "assemblyscript-prettier": "^3.0.1",
     "benchmark": "^2.1.4",
     "benny": "^3.7.1",
@@ -22,16 +86,15 @@
     "fast-json-stringify": "^6.0.1",
     "flatted": "^3.3.3",
     "prettier": "^3.6.2",
-    "ts-node": "^10.9.2",
-    "ts-patch": "^3.3.0",
-    "typescript": "^5.8.3",
+    "typescript": "^6.0.3",
     "utf-as": "^0.1.1"
   },
   "bugs": {
     "url": "https://github.com/JairusSW/json-ty/issues"
   },
-  "contributors": [],
-  "description": "",
+  "contributors": [
+    "Jairus Tanaka <me@jairus.dev>"
+  ],
   "homepage": "https://github.com/JairusSW/json-ty#readme",
   "keywords": [
     "json",
@@ -44,23 +107,40 @@
     "serde",
     "optimized",
     "fast",
-    "algorithm"
+    "algorithm",
+    "typescript",
+    "webassembly",
+    "wasm",
+    "simd",
+    "assemblyscript"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "@JairusSW:registry": "https://npm.pkg.github.com"
-  },
   "scripts": {
     "ci": "act",
-    "test": "bash ./run-tests.sh",
+    "test": "npm run test:raw && npm run test:compiler",
+    "test:all": "npm test && npm run test:fuzz:raw && npm run test:fuzz:raw:scalar",
     "bench": "bash ./scripts/run-bench.sh && bash ./scripts/build-charts.sh",
     "bench:run": "bash ./scripts/run-bench.sh",
     "bench:charts": "bash ./scripts/build-charts.sh",
-    "build:test": "rm -rf ./build/ && ",
-    "test:wasmtime": "wasmtime ./build/test.wasm",
-    "build:transform": "tsc -p ./transform",
+    "bench:overview": "bash ./scripts/run-bench.sh && bash ./scripts/build-charts.sh",
+    "bench:classic": "npm run bench:classic:run && npm run bench:classic:charts",
+    "bench:classic:run": "npm run build:compiler && node ./scripts/build-classic-runtime.mjs && node ./bench/classic.bench.mjs",
+    "bench:classic:charts": "node ./scripts/build-classic-charts.mjs",
+    "bench:classic:smoke": "npm run build:compiler && node ./scripts/build-classic-runtime.mjs && JSON_TY_CLASSIC_FILTER=twitter,canada,poet JSON_TY_CLASSIC_MAX_BYTES=4000000 JSON_TY_BENCH_MS=25 node ./bench/classic.bench.mjs",
+    "bench:raw": "npm run build:raw && node ./bench/raw-flat.bench.mjs",
+    "bench:parity": "npm run build:compiler && node ./scripts/build-parity-runtime.mjs && node ./bench/json-as-parity.bench.mjs",
+    "bench:lazy": "npm run build:compiler && node ./scripts/build-parity-runtime.mjs && node ./bench/lazy.bench.mjs",
+    "typecheck": "tsc -p ./tsconfig.json --noEmit && tsc -p ./compiler --noEmit",
+    "check": "npm run typecheck && npm run test:all",
+    "build:compiler": "tsc -p ./compiler",
+    "build:project": "npm run build:compiler && node ./compiler/lib/cli.js",
+    "build:raw": "npm run build:compiler && node ./scripts/build-raw-runtime.mjs",
+    "test:raw": "npm run build:raw && node ./src/raw/wasm-contract.test.mjs && node ./src/raw/node-binding.test.mjs && node ./src/raw/browser-binding.test.mjs && node ./src/raw/rfc.test.mjs",
+    "test:compiler": "npm run build:compiler && node ./compiler/src/program-analyzer.test.mjs && node ./compiler/src/call-transformer.test.mjs && node ./compiler/src/assembly-codegen.test.mjs && node ./compiler/src/build.test.mjs && node ./compiler/src/wide-schema.test.mjs && node ./compiler/src/ts-patch.test.mjs",
+    "test:fuzz:raw": "npm run build:raw && node ./src/raw/fuzz.test.mjs",
+    "test:fuzz:raw:scalar": "JSON_TY_DISABLE_SIMD=1 npm run build:raw && node ./src/raw/fuzz.test.mjs && npm run build:raw",
     "format": "prettier -w .",
-    "prepare": "ts-patch install -s"
+    "prepack": "npm run build:compiler"
   },
   "type": "module"
 }
