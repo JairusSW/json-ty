@@ -147,6 +147,13 @@ function bitmapStores(
   }).join(`\n${indentation}`);
 }
 
+function bitmapStateStores(layout: ObjectLayout, indentation = "    "): string {
+  return layout.bitmapWords === 1
+    ? "store<u64>(record, <u64>presence | (<u64>nulls << 32));"
+    : `${bitmapStores(layout, "presence", 0, indentation)}
+${indentation}${bitmapStores(layout, "nulls", layout.nullOffset, indentation)}`;
+}
+
 function bitmapResets(layout: ObjectLayout): string {
   return (["presence", "nulls", "lazy"] as const)
     .flatMap((kind) => Array.from(
@@ -204,6 +211,7 @@ export const recordPolicy = {
   bitmapVariable,
   bitmapDeclarations,
   bitmapStores,
+  bitmapStateStores,
   bitmapResets,
   defaultDocumentJson,
   sourcePreservesOutput,

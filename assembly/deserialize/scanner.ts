@@ -2,10 +2,7 @@
 
 import { eiselLemire22 } from "../eisel-lemire";
 import { parse4Digits } from "./digits";
-import { scanString_SWAR } from "./swar/string";
-import { scanString_NAIVE } from "./naive/string";
-import { scanString_SIMD } from "./simd/string";
-import { scanValueEndTrusted } from "../util/scanValueEnd";
+import { scanStringKernel, scanValueEndTrustedKernel } from "./kernel";
 
 
 @external("env", "parseNumberSlow")
@@ -51,6 +48,7 @@ function addDynamicGraphBytes(bytes: usize): void {
 // JavaScript string ingress is encoded by the host and is therefore already
 // shortest-form UTF-8. Raw Buffer/Uint8Array ingress keeps the strict validator.
 export function setStringInputTrusted(trusted: bool): void {
+  if (stringInputTrusted == trusted && inputMinified) return;
   stringInputTrusted = trusted;
   inputMinified = true;
 }
@@ -143,23 +141,14 @@ export function matchJsonKey(pointer: usize, end: usize, expected: usize, expect
 
 
 @inline
+export function scanStringContentResult(pointer: usize, end: usize): u64 {
+  return scanStringKernel(pointer - 1, end, stringInputTrusted);
+}
+
+
+@inline
 export function scanStringContent(pointer: usize, end: usize): usize {
-  if (JSON_TY_KERNEL_TIER == 0) {
-    const naive = scanString_NAIVE(pointer - 1, end, stringInputTrusted);
-    if (naive == 0) return 0;
-    stringEscaped = (naive & 1) != 0;
-    return <usize>(naive >> 32) - 1;
-  }
-  if (JSON_TY_KERNEL_TIER == 2 && ASC_FEATURE_SIMD) {
-    const simd = scanString_SIMD(pointer - 1, end, stringInputTrusted);
-    if (simd == 0) return 0;
-    stringEscaped = (simd & 1) != 0;
-    return <usize>(simd >> 32) - 1;
-  }
-  // The stable scanner surface delegates to the SWAR kernel. It accepts the
-  // opening quote, scans raw UTF-8 bytes, and returns a
-  // retained-span result; json-ty keeps its existing quote-pointer ABI here.
-  const result = scanString_SWAR(pointer - 1, end, stringInputTrusted);
+  const result = scanStringContentResult(pointer, end);
   if (result == 0) return 0;
   stringEscaped = (result & 1) != 0;
   return <usize>(result >> 32) - 1;
@@ -508,7 +497,7 @@ export function skipValueMinified(pointer: usize, end: usize): usize {
 /** Boundary-only fast path for an explicitly caller-validated canonical input. */
 @inline
 export function skipValueMinifiedTrusted(pointer: usize, end: usize): usize {
-  return scanValueEndTrusted(pointer, end);
+  return scanValueEndTrustedKernel(pointer, end);
 }
 
 // Returns `(endPointer << 32) | elementCount`, or zero for an invalid array.

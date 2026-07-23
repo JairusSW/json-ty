@@ -12,6 +12,7 @@ const benchmarkSchemas = [
   "ParityLarge",
   "ParityLargeLazy",
   "Canada",
+  "CanadaLazy",
   "PoemArray",
 ];
 const benchmarkAssembly = benchmarkSchemas

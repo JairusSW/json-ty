@@ -1,4 +1,5 @@
-import { RAW_ASCII_SOURCE, RAW_DOCUMENT, RAW_ROOT, RAW_RUNTIME, RAW_SCHEMA, RAW_SERIALIZED, RAW_STATE, GeneratedViewBase, activeDocument, disposeGeneratedView, fieldBitmapByte, fieldBitmapMask, generatedViewDocument, hasAnyViewOverlay, hasViewOverlay, initializeView, invalidateViewSerialization, materializeViewField, readViewOverlay, schemaHasComposites, setHidden, setInternal, syncViewEnumerable, writeViewOverlay } from "./view-state.js";
+import { RAW_ASCII_SOURCE, RAW_DOCUMENT, RAW_ROOT, RAW_RUNTIME, RAW_SCHEMA, RAW_SERIALIZED, RAW_STATE, GeneratedViewBase, activeDocument, applyViewFieldWrite, disposeGeneratedView, fieldBitmapByte, fieldBitmapMask, generatedViewDocument, hasAnyViewOverlay, hasViewOverlay, initializeView, invalidateViewSerialization, materializeViewField, readViewOverlay, schemaHasComposites, setHidden, setInternal, syncViewEnumerable, writeViewOverlay } from "./view-state.js";
+import { HostByteBridge, INPUT_JSON, INPUT_RAW, createNodeHostByteCodec } from "./host-byte-bridge.js";
 
 export { RAW_ASCII_SOURCE, RAW_DOCUMENT, RAW_OVERLAY, RAW_ROOT, RAW_RUNTIME, RAW_SCHEMA, RAW_SERIALIZED, RAW_STATE, GeneratedViewBase, activeDocument, disposeGeneratedView, generatedViewDocument, hasViewOverlay, readViewOverlay, writeViewOverlay } from "./view-state.js";
 
@@ -14,12 +15,8 @@ const NUMBER_SCRATCH_SIZE = 128;
 
 const RAW_JSON = Symbol.for("json-ty.raw");
 const RAW_ARRAY_OWNER = Symbol("json-ty.arrayOwner");
-const HAS_BUFFER = typeof Buffer !== "undefined";
 const STRING_IS_WELL_FORMED = String.prototype.isWellFormed;
 const SURROGATE_PATTERN = /[\uD800-\uDFFF]/;
-const INPUT_RAW = 0;
-const INPUT_JSON = 1;
-const INPUT_ROOT_VALUE = 2;
 
 function alignPage(bytes) {
   return Math.ceil(bytes / PAGE_SIZE) * PAGE_SIZE;
@@ -99,7 +96,7 @@ function stringifyJsonValue(input) {
 }
 
 export class RawNodeBinding {
-  constructor(wasm, options = {}) {
+  constructor(wasm, options = {}, byteCodec = createNodeHostByteCodec(typeof Buffer === "undefined" ? undefined : Buffer)) {
     if (typeof wasm === "string") {
       throw new TypeError("Pass Wasm bytes or a WebAssembly.Module; file loading belongs to the Node application");
     }
@@ -115,15 +112,19 @@ export class RawNodeBinding {
       initial: initialBytes / PAGE_SIZE,
       maximum: maximumPages,
     });
+    this.control = control;
+    this.scratch = scratch;
+    this.scratchCapacity = scratchCapacity;
+    this.heapBase = heapBase;
+    this._byteBridge = new HostByteBridge(this, byteCodec);
     const module = bytes instanceof WebAssembly.Module ? bytes : new WebAssembly.Module(bytes);
     const importedMemory = this.memory;
-    const asciiDecoder = HAS_BUFFER ? null : new TextDecoder("ascii");
+    const bridge = this._byteBridge;
     this.instance = new WebAssembly.Instance(module, {
       env: {
         memory: importedMemory,
         parseNumberSlow(pointer, length) {
-          const bytes = new Uint8Array(importedMemory.buffer, pointer, length);
-          return Number(HAS_BUFFER ? Buffer.from(bytes.buffer).toString("ascii", pointer, pointer + length) : asciiDecoder.decode(bytes));
+          return Number(bridge.decodeAscii(pointer, pointer + length));
         },
         abort() {
           throw new Error("Unexpected AssemblyScript abort in raw runtime");
@@ -131,11 +132,6 @@ export class RawNodeBinding {
       },
     });
     this.exports = this.instance.exports;
-    this.control = control;
-    this.scratch = scratch;
-    this.scratchCapacity = scratchCapacity;
-    this.heapBase = heapBase;
-    this._refreshViews();
 
     const status = this.exports.initialize(control, scratch, scratchCapacity, heapBase, this.memory.buffer.byteLength);
     if (status !== STATUS_OK) throw new Error(`Raw runtime initialization failed with status ${status}`);
@@ -161,14 +157,6 @@ export class RawNodeBinding {
     this._materializeDynamicTree = this.exports.materializeDynamicTree;
     this._serializeDynamic = this.exports.serializeDynamic;
     this.objectShape = options.objectShape ?? "view";
-    this._encoder = new TextEncoder();
-    this._decoder = new TextDecoder();
-    this._fatalDecoder = new TextDecoder("utf-8", { fatal: true });
-    this._scratchInputValid = false;
-    this._scratchInputMode = INPUT_RAW;
-    this._scratchInputString = null;
-    this._scratchInputSource = null;
-    this._scratchInputLength = 0;
     this._arrayFinalizer =
       typeof FinalizationRegistry === "function"
         ? new FinalizationRegistry(({ runtime, document }) => {
@@ -182,132 +170,43 @@ export class RawNodeBinding {
   }
 
   _refreshViews() {
-    const buffer = this.memory.buffer;
-    this.buffer = HAS_BUFFER ? Buffer.from(buffer) : null;
-    this.u8 = new Uint8Array(buffer);
-    this.u32 = new Uint32Array(buffer);
-    this.i32 = new Int32Array(buffer);
-    this.f32 = new Float32Array(buffer);
-    this.f64 = new Float64Array(buffer);
+    this._byteBridge.refreshViews();
   }
 
   _byteLength(value) {
-    return HAS_BUFFER ? Buffer.byteLength(value, "utf8") : this._encoder.encode(value).byteLength;
+    return this._byteBridge.byteLength(value);
   }
 
   _writeUtf8(value, offset, capacity) {
-    if (this.buffer !== null) return this.buffer.write(value, offset, capacity, "utf8");
-    const result = this._encoder.encodeInto(value, this.u8.subarray(offset, offset + capacity));
-    if (result.read !== value.length) throw new RangeError("UTF-8 destination capacity was exhausted");
-    return result.written;
+    return this._byteBridge.writeUtf8(value, offset, capacity);
   }
 
   _decodeUtf8(start, end) {
-    return this.buffer !== null ? this.buffer.toString("utf8", start, end) : this._decoder.decode(this.u8.subarray(start, end));
+    return this._byteBridge.decodeUtf8(start, end);
   }
 
   _ensureBytes(requiredBytes) {
-    if (requiredBytes <= this.memory.buffer.byteLength) return;
-    const pages = Math.ceil((requiredBytes - this.memory.buffer.byteLength) / PAGE_SIZE);
-    this.memory.grow(pages);
-    this._refreshViews();
-    this.exports.setHeapLimit(this.memory.buffer.byteLength);
+    this._byteBridge.ensureBytes(requiredBytes);
   }
 
   _result(offset) {
-    return this.u32[(this.control + offset) >>> 2] >>> 0;
+    return this._byteBridge.result(offset);
   }
 
   _callWithMemoryRefresh(operation, ...args) {
-    const previous = this.memory.buffer;
-    const result = operation(...args);
-    if (this.memory.buffer !== previous) this._refreshViews();
-    return result;
+    return this._byteBridge.callWithMemoryRefresh(operation, ...args);
   }
 
   _invalidateScratchInput() {
-    if (!this._scratchInputValid) return;
-    this._scratchInputValid = false;
-    this._scratchInputString = null;
-    this._scratchInputSource = null;
+    this._byteBridge.invalidateScratchInput();
   }
 
   _writeInput(input, requireEchoSpace = false, mode = INPUT_RAW) {
-    let length;
-    if (typeof input === "string") {
-      if (this._scratchInputValid && this._scratchInputMode === mode && this._scratchInputString === input) {
-        if (requireEchoSpace && ((this.scratch + this._scratchInputLength + 7) & ~7) + this._scratchInputLength > this.scratch + this.scratchCapacity) {
-          throw new RangeError("Input and output exceed operation scratch capacity");
-        }
-        return this._scratchInputLength;
-      }
-      const source = input;
-      if (mode === INPUT_JSON) input = escapeUnpairedSurrogates(input);
-      if (input.length * 3 > this.scratchCapacity) {
-        const exact = this._byteLength(input);
-        if (exact > this.scratchCapacity) throw new RangeError("Input exceeds operation scratch capacity");
-      }
-      length = this._writeUtf8(input, this.scratch, this.scratchCapacity);
-      this._scratchInputValid = true;
-      this._scratchInputMode = mode;
-      this._scratchInputString = source;
-      this._scratchInputSource = input;
-      this._scratchInputLength = length;
-    } else if (HAS_BUFFER && Buffer.isBuffer(input)) {
-      this._invalidateScratchInput();
-      length = input.length;
-      if (length > this.scratchCapacity) throw new RangeError("Input exceeds operation scratch capacity");
-      input.copy(this.buffer, this.scratch);
-    } else if (input instanceof Uint8Array) {
-      this._invalidateScratchInput();
-      length = input.byteLength;
-      if (length > this.scratchCapacity) throw new RangeError("Input exceeds operation scratch capacity");
-      this.u8.set(input, this.scratch);
-    } else {
-      throw new TypeError("Expected a string, Buffer, or Uint8Array");
-    }
-    if (requireEchoSpace && ((this.scratch + length + 7) & ~7) + length > this.scratch + this.scratchCapacity) {
-      throw new RangeError("Input and output exceed operation scratch capacity");
-    }
-    return length;
+    return this._byteBridge.writeInput(input, requireEchoSpace, mode, escapeUnpairedSurrogates);
   }
 
   _writeRootValueInput(input) {
-    if (typeof input === "string" && this._scratchInputValid && this._scratchInputMode === INPUT_ROOT_VALUE && this._scratchInputString === input) {
-      return this._scratchInputLength;
-    }
-
-    const source = input;
-    let length;
-    if (typeof input === "string") {
-      input = escapeUnpairedSurrogates(input);
-      if (input.length * 3 + 10 > this.scratchCapacity) {
-        const exact = this._byteLength(input);
-        if (exact + 10 > this.scratchCapacity) throw new RangeError("Input exceeds operation scratch capacity");
-      }
-      length = this._writeUtf8(input, this.scratch + 9, this.scratchCapacity - 10);
-      this._scratchInputValid = true;
-      this._scratchInputMode = INPUT_ROOT_VALUE;
-      this._scratchInputString = source;
-      this._scratchInputSource = input;
-      this._scratchInputLength = length + 10;
-    } else if (HAS_BUFFER && Buffer.isBuffer(input)) {
-      this._invalidateScratchInput();
-      length = input.length;
-      if (length + 10 > this.scratchCapacity) throw new RangeError("Input exceeds operation scratch capacity");
-      input.copy(this.buffer, this.scratch + 9);
-    } else if (input instanceof Uint8Array) {
-      this._invalidateScratchInput();
-      length = input.byteLength;
-      if (length + 10 > this.scratchCapacity) throw new RangeError("Input exceeds operation scratch capacity");
-      this.u8.set(input, this.scratch + 9);
-    } else {
-      throw new TypeError("Expected a string, Buffer, or Uint8Array");
-    }
-
-    this.u8.set([0x7b, 0x22, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x22, 0x3a], this.scratch);
-    this.u8[this.scratch + 9 + length] = 0x7d;
-    return length + 10;
+    return this._byteBridge.writeRootValueInput(input, escapeUnpairedSurrogates);
   }
 
   echo(input) {
@@ -357,7 +256,8 @@ export class RawNodeBinding {
       throw new SyntaxError(`Raw parse failed with status ${status} at byte ${rootSchema ? Math.max(0, fault - 9) : fault}`);
     }
     const root = document + this._result(8);
-    const asciiSource = !rootSchema && stringInput && length === this._scratchInputSource.length ? this._scratchInputSource : null;
+    const residentSource = this._byteBridge.scratchInputSource;
+    const asciiSource = !rootSchema && stringInput && length === residentSource.length ? residentSource : null;
     const view = new schema.View(this, document, root, asciiSource);
     if (!rootSchema) return view;
     if (!rootArray) {
@@ -388,14 +288,14 @@ export class RawNodeBinding {
     }
     if (options.plain) {
       try {
-        const source = typeof input === "string" ? input : input instanceof Uint8Array ? this._fatalDecoder.decode(input) : null;
+        const source = typeof input === "string" ? input : input instanceof Uint8Array ? this._byteBridge.decodeFatal(input) : null;
         if (source === null) {
           throw new TypeError("Expected a string, Buffer, or Uint8Array");
         }
         return globalThis.JSON.parse(source);
       } catch (error) {
         if (error instanceof SyntaxError) throw error;
-        if (error instanceof TypeError && ((HAS_BUFFER && Buffer.isBuffer(input)) || input instanceof Uint8Array)) {
+        if (error instanceof TypeError && input instanceof Uint8Array) {
           throw new SyntaxError(`Invalid UTF-8 JSON input: ${error.message}`);
         }
         throw error;
@@ -425,7 +325,8 @@ export class RawNodeBinding {
       throw new SyntaxError(`Raw dynamic parse failed with status ${this._result(0)} at byte ${this._result(4)}`);
     }
     const root = document + this._result(8);
-    const asciiSource = stringInput && length === this._scratchInputSource.length ? this._scratchInputSource : null;
+    const residentSource = this._byteBridge.scratchInputSource;
+    const asciiSource = stringInput && length === residentSource.length ? residentSource : null;
     const state = { document, ownsDocument: true };
     const view = dynamicView(this, state, root, asciiSource);
     return view;
@@ -1176,12 +1077,6 @@ export function materializeGeneratedField(view, schema, field) {
   view[RAW_RUNTIME]._materializeField(schema, view[RAW_STATE], view[RAW_ROOT], field);
 }
 
-function clearDeferredField(runtime, schema, root, field) {
-  if (schema.lazyOffset !== undefined && field.decorators?.lazy && field.kind !== "string") {
-    runtime.u32[(root + schema.lazyOffset + fieldBitmapByte(field)) >>> 2] &= ~fieldBitmapMask(field);
-  }
-}
-
 export function readGeneratedComposite(view, schema, field, cache) {
   const document = activeDocument(view, "read");
   const runtime = view[RAW_RUNTIME];
@@ -1213,14 +1108,7 @@ export function readGeneratedComposite(view, schema, field, cache) {
 }
 
 export function writeGeneratedField(view, schema, field, value) {
-  const document = activeDocument(view, "write");
-  const runtime = view[RAW_RUNTIME];
-  const root = view[RAW_ROOT];
-  const mask = fieldBitmapMask(field);
-  const bitmapByte = fieldBitmapByte(field);
-  const presenceIndex = (root + bitmapByte) >>> 2;
-  const nullIndex = (root + schema.nullOffset + bitmapByte) >>> 2;
-  clearDeferredField(runtime, schema, root, field);
+  activeDocument(view, "write");
   if (value === null && !field.nullable && field.kind !== "null") throw new TypeError(`${field.name} is not nullable`);
   if (value !== undefined && value !== null) {
     if (field.kind === "null") throw new TypeError(`${field.name} must be null`);
@@ -1230,28 +1118,7 @@ export function writeGeneratedField(view, schema, field, value) {
     if (field.kind === "array" && !Array.isArray(value) && !(value instanceof JsonArrayView)) throw new TypeError(`${field.name} must be an array`);
     if ((field.kind === "object" || field.kind === "union") && typeof value !== "object") throw new TypeError(`${field.name} must be an object`);
   }
-  if (field.kind === "number" || field.kind === "boolean" || field.kind === "null") {
-    invalidateSerialization(view);
-    if (value === undefined) runtime.u32[presenceIndex] &= ~mask;
-    else {
-      runtime.u32[presenceIndex] |= mask;
-      if (value === null && field.kind !== "null") runtime.u32[nullIndex] |= mask;
-      else {
-        runtime.u32[nullIndex] &= ~mask;
-        if (field.kind === "number") runtime.f64[(root + field.offset) >>> 3] = value;
-        else if (field.kind === "boolean") runtime.u32[(root + field.offset) >>> 2] = value ? 1 : 0;
-      }
-    }
-  } else {
-    writeViewOverlay(view, field.name, value);
-    if (value === undefined) runtime.u32[presenceIndex] &= ~mask;
-    else {
-      runtime.u32[presenceIndex] |= mask;
-      if (value === null) runtime.u32[nullIndex] |= mask;
-      else runtime.u32[nullIndex] &= ~mask;
-    }
-  }
-  syncEnumerableProperty(view, field, value !== undefined || field.defaultValue !== undefined);
+  applyViewFieldWrite(view, schema, field, value);
 }
 
 export function createObjectView(schema, classPrototype = undefined) {

@@ -11,6 +11,7 @@ const {
   bitmapDeclarations,
   bitmapMask,
   bitmapResets,
+  bitmapStateStores,
   bitmapStores,
   bitmapVariable,
   bitmapWord,
@@ -190,8 +191,7 @@ ${chunks}
   if (ordered) cursor++;
 ${fields}
   if (ordered && cursor == documentEnd) {
-    ${bitmapStores(layout, "presence", 0)}
-    ${bitmapStores(layout, "nulls", layout.nullOffset)}
+    ${bitmapStateStores(layout)}
     ${layout.lazyOffset === undefined ? "" : bitmapStores(layout, "lazy", layout.lazyOffset)}
     ${sourcePreservesOutput(layout) ? "markDocumentSourceCandidate(document);" : ""}
     if (output == 0) setResultRoot(<u32>recordOffset);
@@ -236,13 +236,16 @@ function orderedParseHelpers(layout: ObjectLayout): string {
       .join("\n");
     const lazyDeclaration = `\n  let ${lazy}: u32 = 0;`;
     const lazyStore = layout.lazyOffset === undefined ? "" : `\n  store<u32>(record + ${layout.lazyOffset + word * 4}, ${lazy});`;
+    const bitmapStore = layout.nullOffset === 4 && word === 0
+      ? `  store<u64>(record, <u64>${presence} | (<u64>${nulls} << 32));`
+      : `  store<u32>(record + ${word * 4}, ${presence});
+  store<u32>(record + ${layout.nullOffset + word * 4}, ${nulls});`;
     chunks.push(`
 function parse${layout.name}OrderedChunk${chunk}(cursor: usize, documentEnd: usize, record: usize, document: usize, documentSource: usize): usize {
   let ${presence}: u32 = 0;
   let ${nulls}: u32 = 0;${lazyDeclaration}
 ${body}
-  store<u32>(record + ${word * 4}, ${presence});
-  store<u32>(record + ${layout.nullOffset + word * 4}, ${nulls});${lazyStore}
+${bitmapStore}${lazyStore}
   return cursor;
 }`);
   }
@@ -285,8 +288,7 @@ ${fields}
     if (cursor < documentEnd && load<u8>(cursor) == 0x7d) {
       cursor = finishDocument(cursor + 1, documentEnd);
       if (cursor != 0) {
-        ${bitmapStores(layout, "presence", 0)}
-        ${bitmapStores(layout, "nulls", layout.nullOffset)}
+        ${bitmapStateStores(layout)}
         ${layout.lazyOffset === undefined ? "" : bitmapStores(layout, "lazy", layout.lazyOffset)}
         if (output == 0) setResultRoot(<u32>recordOffset);
         return <u32>document;
@@ -328,7 +330,7 @@ function parseIntoTrustedFastPath(layout: ObjectLayout, retainsSource: boolean):
   const documentEnd = documentSource + <usize>length;
   const recordOffset: usize = 16;
   const record = document + recordOffset;
-  storeDocumentHeader(document, <u32>totalLength, ${retainsSource ? "<u32>(documentSource - document)" : "0"}, length, 16, ${retainsSource ? "0x30000000" : "0x10000000"});
+  storeDocumentHeader(document, <u32>totalLength, ${retainsSource ? "<u32>(documentSource - document)" : "0"}, length, 16, ${retainsSource ? sourcePreservesOutput(layout) ? "0x70000000" : "0x30000000" : "0x10000000"});
   let cursor = documentSource;
   if (cursor >= documentEnd || load<u8>(cursor) != 0x7b) return parse${layout.name}Core(source, length, true, true, output, capacity);
   cursor++;
@@ -337,10 +339,8 @@ ${bitmapDeclarations(layout, "nulls")}
 ${bitmapDeclarations(layout, "lazy")}
 ${fields}
   if (cursor != documentEnd) return parse${layout.name}Core(source, length, true, true, output, capacity);
-  ${bitmapStores(layout, "presence", 0)}
-  ${bitmapStores(layout, "nulls", layout.nullOffset)}
+  ${bitmapStateStores(layout)}
   ${layout.lazyOffset === undefined ? "" : bitmapStores(layout, "lazy", layout.lazyOffset)}
-  ${sourcePreservesOutput(layout) ? "markDocumentSourceCandidate(document);" : ""}
   return output;`;
 }
 
@@ -445,8 +445,7 @@ ${dispatch}
 
   const finished = finishDocument(cursor, documentEnd);
   if (finished == 0) return fail${layout.name}(<u32>document, ERROR_TRAILING_DATA, <u32>(cursor - documentSource));
-  ${bitmapStores(layout, "presence", 0)}
-  ${bitmapStores(layout, "nulls", layout.nullOffset)}
+  ${bitmapStateStores(layout)}
   ${layout.lazyOffset === undefined ? "" : bitmapStores(layout, "lazy", layout.lazyOffset)}
   if (output == 0) setResultRoot(<u32>recordOffset);
   return <u32>document;

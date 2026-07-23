@@ -21,3 +21,8 @@ settle.
 - SIMD/SWAR/scalar parser kernels and shortest binary64 serialization
 - RFC, differential fuzz, generated-project, ABI, lifetime, and parity suites
 - overview and classic benchmark charts
+- json-as-style benchmark orchestration and isolated docs-branch chart publishing
+- content-addressed artifact compilation and cache ownership
+- shared document mutation invariants and Node/browser host-byte bridge
+- centralized compile-time kernel selection with tuned short-input dispatch
+- digest-owned benchmark reports and publication chart inventory

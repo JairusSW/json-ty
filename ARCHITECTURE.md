@@ -26,7 +26,11 @@ is explicit. The compiler injects an integer tier constant and Binaryen removes
 unselected bodies, so generated schema code has no tier import or runtime branch.
 The artifact-compiler module owns generated paths, layout writes, compiler
 flags, diagnostics, synchronous/asynchronous invocation, and optional Wasm
-caching. Project builds, tests, and benchmark scripts are adapters that state
+caching. It derives a content identity from the exact generated Assembly,
+layouts, compiler arguments and version, and maintained runtime sources. Cache
+entries are addressed by that identity, so callers select only a cache
+directory and cannot accidentally reuse an artifact built from different
+inputs. Project builds, tests, and benchmark scripts are adapters that state
 their schemas and compilation intent.
 
 The two backends share a canonical per-type plan, then dispatch through parallel
@@ -35,8 +39,9 @@ type-emitter registries under `compiler/src/emit/assembly` and
 policy therefore has one explicit extension point on each side instead of being
 scattered through root-schema switches. The AssemblyScript emitters generate
 fixed-offset parse/write expressions; the host emitters generate fixed-mask
-accessors and specialized scalar/string setters. Composite mutation alone uses
-a shared cold helper. The enclosing host-artifact module owns the complete
+accessors and specialized hot getters. Every setter delegates its complete
+presence, null, lazy, overlay, serialization, dirty, and enumerable transition
+to the shared view-state module. The enclosing host-artifact module owns the complete
 generated JavaScript runtime, including view classes, schema registration,
 compact ABI exports, and transformer bindings; build orchestration consumes the
 single resulting artifact without knowing raw view-state policy.
@@ -49,20 +54,30 @@ crosses the boundary once without a runtime name lookup.
 
 Raw and generated object views share the document/view-state module. It owns
 symbol identity, construction, root ownership and release, serialized/canonical
-invalidation, overlays, enumerable compatibility, and lazy materialization.
-The raw adapter retains specialized hot getters, while the generated adapter
-retains emitted fixed-offset getters; both delegate state transitions to the
-same invariant owner.
+invalidation, overlays, enumerable compatibility, lazy materialization, and
+field-write state transitions. The raw adapter retains specialized hot getters,
+while the generated adapter retains emitted fixed-offset getters; both delegate
+mutations to the same invariant owner.
+
+Node and browser bindings are thin adapters over one internal host-byte bridge.
+The bridge owns memory-view refresh after growth, UTF-8 ingress and egress,
+scratch-input residency, result-header access, root envelopes, and raw versus
+JSON input modes. The Node adapter injects its Buffer-accelerated codec; the
+browser adapter explicitly injects TextEncoder/TextDecoder and has no Buffer
+dependency.
 
 ## AssemblyScript kernel library
 
 The maintained implementation lives under `assembly`, divided into
-`deserialize/`, `serialize/`, `util/`, and `layout/`. Naive and SWAR kernels
-use matching tier directories beneath their deserialize/serialize roots.
+`deserialize/`, `serialize/`, `util/`, and `layout/`. Naive, SWAR, and SIMD
+kernels use matching tier directories beneath their deserialize/serialize
+roots. Each root has a `kernel.ts` selection module; it is the only module that
+reads the compile-time tier constant. Stable grammar entry points delegate to
+it and contain no tier branches of their own.
 Null, boolean, number, string,
 array, struct, and dynamic JSON each have a dedicated module. The bounded UTF-8
-writer lives in `serialize/writer.ts`; the grammar/SIMD/SWAR scanner lives in
-`deserialize/scanner.ts`. Root-level `parser.ts`, `writer.ts`, and `dynamic.ts`
+writer lives in `serialize/writer.ts`; tier-neutral scanner entry points live
+in `deserialize/scanner.ts`. Root-level `parser.ts`, `writer.ts`, and `dynamic.ts`
 are compatibility barrels only.
 
 Generated AssemblyScript is deliberately thin. It emits one root parse/write

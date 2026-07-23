@@ -9,10 +9,6 @@ import { createJsonTyTransformer } from "./call-transformer.js";
 import { generateHostArtifact } from "./host-artifact/index.js";
 import { analyzeProgram, createProgramFromConfig } from "./program-analyzer.js";
 
-// Bump whenever emitted AssemblyScript or host bindings change, independently
-// of the schema-IR version, so an existing project never reuses stale Wasm.
-const CODEGEN_VERSION = 10;
-
 export interface BuildProjectOptions {
   configPath: string;
   generatedDirectory?: string;
@@ -105,9 +101,6 @@ function prepareProject(
   const optimizeLevel = options.optimizeLevel ?? 3;
   const shrinkLevel = options.shrinkLevel ?? 0;
   const kernelTier = resolveKernelTier(options.kernelTier);
-  const hash = createHash("sha256").update(analysis.manifest.hash).update(`|codegen:${CODEGEN_VERSION}|as:0.28|O:${optimizeLevel}|z:${shrinkLevel}|tier:${kernelTier}|simd|bulk-memory|stub`).digest("hex");
-  const cacheEntry = resolve(cacheDirectory, hash);
-  const cachedWasm = resolve(cacheEntry, "runtime.wasm");
   const manifestPath = resolve(generatedDirectory, "schema-manifest.json");
   const runtimePath = resolve(generatedDirectory, "runtime.js");
   const assemblyBase = modulePath(generatedDirectory, resolve(packageRoot, "assembly"));
@@ -118,9 +111,14 @@ function prepareProject(
     optimizeLevel,
     shrinkLevel,
     kernelTier,
-    wasmCachePath: cachedWasm,
+    cacheDirectory,
   });
   const hostArtifact = generateHostArtifact(compilation.artifact.layouts);
+  const hash = createHash("sha256")
+    .update(compilation.identity)
+    .update("\0")
+    .update(hostArtifact.source)
+    .digest("hex");
 
   writeIfChanged(manifestPath, `${JSON.stringify(analysis.manifest, null, 2)}\n`);
   writeIfChanged(runtimePath, hostArtifact.source);

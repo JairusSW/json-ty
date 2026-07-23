@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { generateAssemblyModule } from "./record-codegen/index.js";
 import { resolveKernelTier, type KernelTier } from "./kernel-tier.js";
 import type { ObjectLayout, ObjectSchema } from "./schema-ir.js";
@@ -14,7 +15,7 @@ export interface ArtifactCompilerOptions {
   optimizeLevel?: 0 | 1 | 2 | 3;
   shrinkLevel?: 0 | 1 | 2;
   simd?: boolean;
-  wasmCachePath?: string;
+  cacheDirectory?: string;
   /** Selects a kernel family at artifact generation time. Defaults to SWAR. */
   kernelTier?: KernelTier;
 }
@@ -32,6 +33,8 @@ export interface AssemblyArtifact {
 
 export interface ArtifactCompilation {
   artifact: AssemblyArtifact;
+  /** Content identity of every input that can affect the emitted Wasm. */
+  identity: string;
   cacheHit: boolean;
   compile(): Promise<AssemblyArtifact>;
   compileSync(): AssemblyArtifact;
@@ -66,11 +69,56 @@ function compileArguments(
   ];
 }
 
-function cacheArtifact(artifact: AssemblyArtifact, cachePath?: string): void {
-  if (!cachePath) return;
-  mkdirSync(dirname(cachePath), { recursive: true });
-  copyFileSync(artifact.wasmPath, cachePath);
-  copyFileSync(artifact.watPath, resolve(dirname(cachePath), "runtime.wat"));
+function runtimeSourceIdentity(directory: string): string {
+  const hash = createHash("sha256");
+  const visit = (current: string): void => {
+    if (!existsSync(current) || !statSync(current).isDirectory()) return;
+    for (const entry of readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.name === "__tests__" || entry.name === "wasm") continue;
+      const path = resolve(current, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        hash.update(relative(directory, path).replaceAll("\\", "/"));
+        hash.update("\0");
+        hash.update(readFileSync(path));
+        hash.update("\0");
+      }
+    }
+  };
+  visit(directory);
+  return hash.digest("hex");
+}
+
+function assemblyScriptVersion(): string {
+  const require = createRequire(import.meta.url);
+  return require("assemblyscript/package.json").version as string;
+}
+
+function compilationIdentity(
+  assembly: string,
+  layouts: ObjectLayout[],
+  arguments_: string[],
+  runtimeDirectory: string,
+): string {
+  return createHash("sha256")
+    .update(assembly)
+    .update("\0")
+    .update(JSON.stringify(layouts))
+    .update("\0")
+    .update(JSON.stringify(arguments_.slice(1)))
+    .update("\0")
+    .update(assemblyScriptVersion())
+    .update("\0")
+    .update(runtimeSourceIdentity(runtimeDirectory))
+    .digest("hex");
+}
+
+function cacheArtifact(artifact: AssemblyArtifact, cacheEntry?: string): void {
+  if (!cacheEntry) return;
+  mkdirSync(cacheEntry, { recursive: true });
+  copyFileSync(artifact.wasmPath, resolve(cacheEntry, "runtime.wasm"));
+  copyFileSync(artifact.watPath, resolve(cacheEntry, "runtime.wat"));
 }
 
 /** Prepare one coherent generated-source, layout, Wasm, and WAT compilation. */
@@ -81,6 +129,7 @@ export function prepareArtifactCompilation(options: ArtifactCompilerOptions): Ar
   const generated = generateAssemblyModule(options.schemas, {
     runtimeImportBase: options.runtimeImportBase,
   });
+  const assembly = generated.assembly + (options.assemblySuffix ?? "");
   const artifact: AssemblyArtifact = {
     directory,
     assemblyPath: resolve(directory, "generated.ts"),
@@ -91,7 +140,7 @@ export function prepareArtifactCompilation(options: ArtifactCompilerOptions): Ar
     layouts: generated.layouts,
     kernelTier,
   };
-  writeIfChanged(artifact.assemblyPath, generated.assembly + (options.assemblySuffix ?? ""));
+  writeIfChanged(artifact.assemblyPath, assembly);
   writeIfChanged(artifact.layoutsPath, `${JSON.stringify(generated.layouts, null, 2)}\n`);
   writeIfChanged(artifact.tierMetadataPath, `${JSON.stringify({
     kernelTier,
@@ -99,27 +148,32 @@ export function prepareArtifactCompilation(options: ArtifactCompilerOptions): Ar
     engine: "current",
   }, null, 2)}\n`);
 
-  const cachedWatPath = options.wasmCachePath === undefined
+  const arguments_ = compileArguments(artifact, options);
+  const runtimeDirectory = resolve(directory, options.runtimeImportBase ?? "../../assembly");
+  const identity = compilationIdentity(assembly, generated.layouts, arguments_, runtimeDirectory);
+  const cacheEntry = options.cacheDirectory === undefined
     ? undefined
-    : resolve(dirname(options.wasmCachePath), "runtime.wat");
-  const cacheHit = options.wasmCachePath !== undefined && cachedWatPath !== undefined
-    && existsSync(options.wasmCachePath) && existsSync(cachedWatPath);
+    : resolve(options.cacheDirectory, identity);
+  const cachedWasmPath = cacheEntry === undefined ? undefined : resolve(cacheEntry, "runtime.wasm");
+  const cachedWatPath = cacheEntry === undefined ? undefined : resolve(cacheEntry, "runtime.wat");
+  const cacheHit = cachedWasmPath !== undefined && cachedWatPath !== undefined
+    && existsSync(cachedWasmPath) && existsSync(cachedWatPath);
   if (cacheHit) {
-    copyFileSync(options.wasmCachePath!, artifact.wasmPath);
+    copyFileSync(cachedWasmPath!, artifact.wasmPath);
     copyFileSync(cachedWatPath!, artifact.watPath);
   }
-  const arguments_ = compileArguments(artifact, options);
   let compiled = cacheHit;
 
   return {
     artifact,
+    identity,
     cacheHit,
     async compile() {
       if (compiled) return artifact;
       const { default: asc } = await import("assemblyscript/asc");
       const { error, stderr } = await asc.main(arguments_);
       if (error) throw new Error(stderr?.toString() || String(error));
-      cacheArtifact(artifact, options.wasmCachePath);
+      cacheArtifact(artifact, cacheEntry);
       compiled = true;
       return artifact;
     },
@@ -136,7 +190,7 @@ export function prepareArtifactCompilation(options: ArtifactCompilerOptions): Ar
         const detail = result.stderr || result.stdout || `asc exited with status ${result.status}`;
         throw new Error(detail.trim());
       }
-      cacheArtifact(artifact, options.wasmCachePath);
+      cacheArtifact(artifact, cacheEntry);
       compiled = true;
       return artifact;
     },

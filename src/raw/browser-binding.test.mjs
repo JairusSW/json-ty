@@ -3,12 +3,10 @@ import { readFileSync } from "node:fs";
 
 const wasm = new Uint8Array(readFileSync("build/raw/runtime.wasm"));
 const layouts = JSON.parse(readFileSync("build/raw/schema-layouts.json", "utf8"));
-// Import after masking Buffer to exercise the actual TextEncoder/TextDecoder
-// branch even though this compatibility test runs under Node.
-globalThis.Buffer = undefined;
 const { RawBrowserBinding, createSchemaRegistry } = await import("./browser-binding.js");
 
 const binding = new RawBrowserBinding(wasm, { scratchCapacity: 1 << 20, heapReserve: 1 << 20 });
+assert.equal(binding.buffer, null, "browser adapter must use its TextEncoder byte codec even under Node");
 assert.equal(binding.echo("browser café 😀"), "browser café 😀");
 const schemas = createSchemaRegistry(layouts);
 const metric = binding.parse(schemas.get("Metric"), '{"id":7,"label":"web","ok":true}');

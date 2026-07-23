@@ -1,5 +1,31 @@
 # Overview benchmarks
 
+## Runner
+
+The benchmark interface mirrors json-as while keeping json-ty's Node/V8
+workload adapters and report formats:
+
+```bash
+npm run bench                         # overview + charts
+npm run bench:run -- classic          # one suite
+npm run bench:run -- all --smoke      # bounded full-system check
+npm run bench:all                     # complete matrix + kernel benches
+npm run charts:build                  # validate full reports, then render
+```
+
+Available suites are `overview`, `raw`, `classic`, `classic-v8`, `lazy`,
+`parity`, `tiers`, `kernels`, `publish`, and `all`. Pass `--list` to print them
+or `--no-charts` to collect reports without rendering. Only `overview` and
+complete `publish`/`all` targets render charts automatically. Smoke and
+individual diagnostic suites collect reports without mixing partial data into
+publishable charts.
+
+Like json-as's full-matrix runner, `all` records each failing category and
+continues with independent suites. It exits non-zero with a compact failure
+summary and renders no charts when any required report failed. Individual
+suites use the same interface, so CI, local tuning, and publishing do not need
+separate command graphs.
+
 `npm run bench:overview` builds a dedicated schema-specialized AssemblyScript
 module with the stub runtime, runs the Node benchmark, and renders the overview
 charts. Set `JSON_TY_BENCH_MS` to change the target measurement time per series
@@ -27,10 +53,15 @@ Outputs:
 - `build/charts/overview-serialize.{svg,png}`
 - `build/charts/overview-deserialize.{svg,png}`
 
-`npm run bench:all` regenerates the full naive/SWAR/SIMD execution and
-compile/size report, runs every ported kernel microbenchmark, renders all
-benchmark-backed charts, and syncs the publishable SVGs to
-`benchmark/charts/`.
+`npm run bench:all` regenerates every report required for publication, runs
+every ported kernel microbenchmark, renders all benchmark-backed charts, and
+syncs the publishable SVGs to `benchmark/charts/`.
+
+Every run records `build/logs/benchmark-run.json`. A full manifest includes the
+SHA-256 digest of each publication report. Full chart generation and publishing
+reject smoke or partial manifests, missing reports, and reports changed after
+the run. This makes the report set—not file timestamps or whichever files
+happen to exist—the publication boundary.
 
 The PNGs render at 3× density. The SVGs use the same palette, typography,
 labels, metadata subtitle, and adaptive logarithmic scaling as json-as's
@@ -56,11 +87,11 @@ runner discovers a sibling checkout at
 it lives elsewhere. This keeps fixture bytes identical without vendoring a
 second copy.
 
-The eager series takes raw UTF-8 bytes, validates them, and constructs the
-complete dynamic flat-memory graph in a single Wasm parsing pass. Validation
-is mandatory; `validate: true` is both the explicit spelling and the default.
-Lazy and `JSON.Obj` retain validated nested spans instead, while Canada and
-Poet also have exact full typed schemas. Set
+The eager and `JSON.Obj` series take raw UTF-8 bytes, validate them, and
+construct the complete dynamic flat-memory graph in a single Wasm parsing
+pass. Validation is mandatory and eager graph construction is the default.
+The lazy series explicitly selects retained nested spans, while Canada and Poet
+also have exact full typed schemas. Set
 `JSON_TY_CLASSIC_INPUT=string` to include host UTF-16→UTF-8 ingress, or
 `JSON_TY_CLASSIC_EAGER_BACKEND=host` to measure ordinary JavaScript-value
 output through the host backend. A complete run owns
@@ -167,3 +198,30 @@ are copied to `benchmark/charts/` for the README and package.
 Classic charts use the shared palette, typography, vertical value labels, and
 metadata subtitle. Their axis stays linear unless the shared sparse-outlier
 detector finds a genuinely huge (at least 4×) upper-tail discontinuity.
+
+## Publishing charts
+
+The versioned chart publisher follows json-as's isolated-worktree workflow:
+
+```bash
+npm run charts:publish
+npm run charts:publish -- --no-run
+npm run charts:publish -- --no-run --dry-run --version dev
+```
+
+It optionally runs the complete publish matrix, builds SVG and 3× PNG charts,
+and commits only `charts/v<version>/` in a temporary worktree for the `docs`
+branch. The main worktree is never committed by the publisher. After a
+successful push, README `<img>` URLs are pinned to that exact version and left
+for review.
+
+Configuration:
+
+- `REMOTE_NAME=origin`
+- `DOCS_BRANCH=docs`
+- `BENCHMARK_VERSION=<name>`
+- `PUBLISH_REQUIRE_CLEAN=1` to reject a dirty tracked worktree
+
+`--dry-run` performs no fetch, commit, push, or README rewrite. It validates the
+existing reports and prints the complete versioned chart set from a temporary
+directory.

@@ -589,10 +589,11 @@ npm run bench:parity
 npm run bench:lazy
 npm run bench:classic
 npm run bench:classic:v8       # resident d8 loops with anti-elision sinks
-npm run bench:tiers          # full naive/SWAR/SIMD report
-npm run bench:tiers:smoke    # abbreviated cross-tier report
-npm run bench:all            # full tiers, kernel microbenches, and all charts
-npm run test:rfc-oracle      # all 318 JSONTestSuite cases, all tiers
+npm run bench:tiers           # full naive/SWAR/SIMD report
+npm run bench:tiers:smoke     # abbreviated cross-tier report
+npm run bench:all             # full tiers, kernel microbenches, and all charts
+npm run charts:publish        # publish versioned charts through an isolated docs worktree
+npm run test:rfc-oracle       # all 318 JSONTestSuite cases, all tiers
 ```
 
 The resident V8 classic gate now passes every corpus against both built-in JS

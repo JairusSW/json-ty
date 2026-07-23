@@ -141,7 +141,7 @@ const rows = [];
 for (const item of cases) {
   const schema = schemas.get(item.schema);
   const parseSchema = schemas.get(`${item.schema}Lazy`) ?? schema;
-  const length = item.rootArray ? runtime._writeRootArrayInput(item.json) : runtime._writeInput(item.json, false, 1);
+  const length = item.rootArray ? runtime._writeRootValueInput(item.json) : runtime._writeInput(item.json, false, 1);
   const parse = runtime.exports[`parse${schema.name}Trusted`];
   const serialize = runtime.exports[`serialize${schema.name}`];
   const benchmarkParseOwned = runtime.exports[`benchmarkParse${parseSchema.name}`];

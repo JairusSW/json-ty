@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import {
+  PUBLICATION_REPORTS,
+  benchmarkScopeEnvironment,
+} from "./lib/benchmark-plan.mjs";
 
 const scope = process.env.JSON_TY_TIER_HARNESS_SCOPE ?? "full";
 if (scope !== "full" && scope !== "smoke") {
@@ -14,9 +18,12 @@ const variants = [
   { label: "simd", kernelTier: "simd", role: "explicit fastest feature tier" },
 ];
 const fixedEnvironment = {
-  JSON_TY_BENCH_MS: scope === "smoke" ? "25" : "200",
-  JSON_TY_LAZY_BENCH_MS: scope === "smoke" ? "50" : "250",
-  JSON_TY_PARITY_MS: scope === "smoke" ? "100" : "500",
+  ...benchmarkScopeEnvironment(scope === "smoke"),
+  ...(scope === "full" ? {
+    JSON_TY_BENCH_MS: "200",
+    JSON_TY_LAZY_BENCH_MS: "250",
+    JSON_TY_PARITY_MS: "500",
+  } : {}),
   JSON_TY_PARITY_RATIO: "0",
   JSON_TY_CLASSIC_REPORT: "build/logs/kernel-tier-classic.json",
   ...(scope === "smoke" ? {
@@ -121,11 +128,11 @@ for (const variant of variants) {
       parity: artifact("build/parity", parityCompile),
     },
     execution: {
-      raw: json("build/logs/raw.json"),
-      overview: json("build/logs/overview.json"),
+      raw: json(PUBLICATION_REPORTS.raw),
+      overview: json(PUBLICATION_REPORTS.overview),
       classic: json(fixedEnvironment.JSON_TY_CLASSIC_REPORT),
-      lazy: json("build/logs/lazy.json"),
-      parity: json("build/logs/json-as-parity.json"),
+      lazy: json(PUBLICATION_REPORTS.lazy),
+      parity: json(PUBLICATION_REPORTS.parity),
     },
   };
   for (const workload of Object.values(entry.execution)) {

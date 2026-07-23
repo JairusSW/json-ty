@@ -10,6 +10,7 @@ import { recordPolicy } from "./policy.js";
 const {
   bitmapDeclarations,
   bitmapMask,
+  bitmapStateStores,
   bitmapStores,
   bitmapVariable,
   bitmapWord,
@@ -18,6 +19,7 @@ const {
   packedWrites,
   typeOf,
 } = recordPolicy;
+
 const encoder = recordPolicy.encoder;
 
 function orderedKeyMatch(field: FieldLayout): string {
@@ -357,8 +359,7 @@ ${dispatch}
     if (separator == 0x7d) { cursor++; break; }
     return graphFailure(cursor);
   }
-  ${bitmapStores(layout, "presence", 0)}
-  ${bitmapStores(layout, "nulls", layout.nullOffset)}
+  ${bitmapStateStores(layout)}
   ${layout.lazyOffset === undefined ? "" : bitmapStores(layout, "lazy", layout.lazyOffset)}
   graphDepth--;
   return cursor;
@@ -411,14 +412,17 @@ function generateOrderedRecordParser(layout: ObjectLayout, layouts: ReadonlyMap<
       const fields = layout.fields.slice(start, start + chunkSize)
         .map((field) => emitField(field, field.index))
         .join("\n");
+      const bitmapStore = layout.nullOffset === 4 && word === 0
+        ? `  store<u64>(record, <u64>${presence} | (<u64>${nulls} << 32));`
+        : `  store<u32>(record + ${word * 4}, ${presence});
+  store<u32>(record + ${layout.nullOffset + word * 4}, ${nulls});`;
       helpers.push(`
 function parse${layout.name}RecordOrderedChunk${chunk}(cursor: usize, end: usize, record: usize): usize {
   let ${presence}: u32 = 0;
   let ${nulls}: u32 = 0;
   let ${lazy}: u32 = 0;
 ${fields}
-  store<u32>(record + ${word * 4}, ${presence});
-  store<u32>(record + ${layout.nullOffset + word * 4}, ${nulls});
+${bitmapStore}
   ${layout.lazyOffset === undefined ? "" : `store<u32>(record + ${layout.lazyOffset + word * 4}, ${lazy});`}
   return cursor;
 }`);
@@ -449,8 +453,7 @@ ${bitmapDeclarations(layout, "presence")}
 ${bitmapDeclarations(layout, "nulls")}
 ${bitmapDeclarations(layout, "lazy")}
 ${fields}
-  ${bitmapStores(layout, "presence", 0)}
-  ${bitmapStores(layout, "nulls", layout.nullOffset)}
+  ${bitmapStateStores(layout)}
   ${layout.lazyOffset === undefined ? "" : bitmapStores(layout, "lazy", layout.lazyOffset)}
   return cursor;
 }
@@ -508,8 +511,7 @@ ${bitmapDeclarations(layout, "lazy")}
 ${fields}
   cursor = skipWhitespace(cursor, end);
   if (cursor >= end || load<u8>(cursor) != 0x7d) return 0;
-  ${bitmapStores(layout, "presence", 0)}
-  ${bitmapStores(layout, "nulls", layout.nullOffset)}
+  ${bitmapStateStores(layout)}
   ${layout.lazyOffset === undefined ? "" : bitmapStores(layout, "lazy", layout.lazyOffset)}
   return cursor + 1;
 }

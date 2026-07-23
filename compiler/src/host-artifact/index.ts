@@ -101,13 +101,10 @@ import {
   disposeGeneratedView,
   generatedViewDocument,
   hasViewOverlay,
-  invalidateGeneratedView,
   materializeGeneratedField,
   readViewOverlay,
   readGeneratedComposite,
-  syncGeneratedEnumerable,
   writeGeneratedField,
-  writeViewOverlay,
 } from "json-ty/raw";
 
 const binding = new RawNodeBinding(readFileSync(fileURLToPath(new URL("./runtime.wasm", import.meta.url))));

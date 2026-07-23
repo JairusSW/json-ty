@@ -36,6 +36,31 @@ function deserializeFloat(
   destination: usize,
   packed: bool,
 ): usize {
+  // A positive four-digit integer is common in compact record identifiers.
+  // Validate and fold it in one load before entering the general decimal
+  // state machine. A following digit, fraction, or exponent deliberately
+  // falls through so longer numbers retain the full rounding path.
+  if (packed && end - start >= 4) {
+    const integer4 = parse4Digits(load<u32>(start));
+    if (integer4 != U32.MAX_VALUE) {
+      const next = start + 4;
+      if (next >= end) {
+        store<f64>(destination, <f64>integer4);
+        return next;
+      }
+      const following = load<u8>(next);
+      if (
+        !isDigit(following) &&
+        following != 0x2e &&
+        following != 0x65 &&
+        following != 0x45
+      ) {
+        store<f64>(destination, <f64>integer4);
+        return next;
+      }
+    }
+  }
+
   const original = start;
   let pointer = start;
   let negative = false;

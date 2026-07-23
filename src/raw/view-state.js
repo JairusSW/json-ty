@@ -74,6 +74,48 @@ export function writeViewOverlay(view, fieldName, value) {
   invalidateViewSerialization(view);
 }
 
+/**
+ * Apply one complete validated field transition. Generated and runtime-created
+ * views share this invariant owner; their hot getters remain specialized.
+ */
+export function applyViewFieldWrite(view, schema, field, value) {
+  activeDocument(view, "write");
+  const runtime = view[RAW_RUNTIME];
+  const root = view[RAW_ROOT];
+  const mask = fieldBitmapMask(field);
+  const bitmapByte = fieldBitmapByte(field);
+  const presenceIndex = (root + bitmapByte) >>> 2;
+  const nullIndex = (root + schema.nullOffset + bitmapByte) >>> 2;
+  if (schema.lazyOffset !== undefined && field.decorators?.lazy && field.kind !== "string") {
+    runtime.u32[(root + schema.lazyOffset + bitmapByte) >>> 2] &= ~mask;
+  }
+  if (field.kind === "number" || field.kind === "boolean" || field.kind === "null") {
+    invalidateViewSerialization(view);
+    if (value === undefined) {
+      runtime.u32[presenceIndex] &= ~mask;
+    } else {
+      runtime.u32[presenceIndex] |= mask;
+      if (value === null && field.kind !== "null") {
+        runtime.u32[nullIndex] |= mask;
+      } else {
+        runtime.u32[nullIndex] &= ~mask;
+        if (field.kind === "number") runtime.f64[(root + field.offset) >>> 3] = value;
+        else if (field.kind === "boolean") runtime.u32[(root + field.offset) >>> 2] = value ? 1 : 0;
+      }
+    }
+  } else {
+    writeViewOverlay(view, field.name, value);
+    if (value === undefined) {
+      runtime.u32[presenceIndex] &= ~mask;
+    } else {
+      runtime.u32[presenceIndex] |= mask;
+      if (value === null) runtime.u32[nullIndex] |= mask;
+      else runtime.u32[nullIndex] &= ~mask;
+    }
+  }
+  syncViewEnumerable(view, field, value !== undefined || field.defaultValue !== undefined);
+}
+
 export function materializeViewField(runtime, schema, state, record, field) {
   if (schema.lazyOffset === undefined) return;
   const mask = fieldBitmapMask(field);

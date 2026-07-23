@@ -16,8 +16,6 @@ export const stringHostEmitter: HostTypeEmitter<StringType> = {
     if (!cacheVariable) throw new Error(`Missing string cache for ${layout.name}.${field.name}`);
     const mask = bitmapMask(field);
     const offset = bitmapOffset(field);
-    const bitmapIndex = `(root + ${offset}) >>> 2`;
-    const nullIndex = `(root + ${layout.nullOffset + offset}) >>> 2`;
     return `  get ${propertyKey(field.name)}() {
     const document = activeDocument(this, "read");
     const runtime = this[RAW_RUNTIME];
@@ -31,20 +29,9 @@ export const stringHostEmitter: HostTypeEmitter<StringType> = {
     return value;
   }
   set ${propertyKey(field.name)}(value) {
-    activeDocument(this, "write");
     if (value === null && ${field.nullable ? "false" : "true"}) throw new TypeError(${JSON.stringify(`${field.name} is not nullable`)});
     if (value !== undefined && value !== null && typeof value !== "string") throw new TypeError(${JSON.stringify(`${field.name} must be a string`)});
-    const runtime = this[RAW_RUNTIME];
-    const root = this[RAW_ROOT];
-    writeViewOverlay(this, ${JSON.stringify(field.name)}, value);
-    if (value === undefined) {
-      runtime.u32[${bitmapIndex}] &= ~${mask};
-    } else {
-      runtime.u32[${bitmapIndex}] |= ${mask};
-      if (value === null) runtime.u32[${nullIndex}] |= ${mask};
-      else runtime.u32[${nullIndex}] &= ~${mask};
-    }
-    syncGeneratedEnumerable(this, ${schemaVariable}.fields[${field.index}], value !== undefined || ${field.defaultValue === undefined ? "false" : "true"});
+    writeGeneratedField(this, ${schemaVariable}, ${schemaVariable}.fields[${field.index}], value);
   }`;
   },
 };
