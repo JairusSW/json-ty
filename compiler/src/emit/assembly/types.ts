@@ -3,6 +3,7 @@ import type { ObjectLayout, TypeRef } from "../../schema-ir.js";
 export type ParseFailureKind =
   | "boolean"
   | "number"
+  | "null"
   | "string"
   | "object"
   | "array"
@@ -33,4 +34,3 @@ export interface AssemblyTypeEmitter<T extends TypeRef = TypeRef> {
   emitParse(type: T, context: AssemblyParseValueContext): string;
   emitSerialize(type: T, context: AssemblySerializeValueContext): string;
 }
-

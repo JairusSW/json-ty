@@ -55,7 +55,7 @@ function failAt(pointer: usize): usize {
 function deferComposite(cursor: usize, end: usize, slot: usize, tag: u32): usize {
   // Initial parsing uses the exact recursive scanner so malformed nested JSON
   // still fails immediately. Once the document is known-valid, materializing a
-  // child only needs the json-as-shaped value-boundary scanner.
+  // child only needs the value-boundary scanner.
   const next = sourceValidated
     ? skipValueMinifiedTrusted(cursor, end)
     : skipValueMinified(cursor, end);
@@ -283,19 +283,27 @@ function parseDynamicCore(
 }
 
 export function parseDynamic(source: u32, length: u32): u32 {
-  return parseDynamicCore(source, length, false, false);
+  return parseDynamicCore(source, length, false, true);
 }
 
 export function parseDynamicTrusted(source: u32, length: u32): u32 {
+  return parseDynamicCore(source, length, true, true);
+}
+
+export function parseDynamicRetained(source: u32, length: u32): u32 {
+  return parseDynamicCore(source, length, false, false);
+}
+
+export function parseDynamicRetainedTrusted(source: u32, length: u32): u32 {
   return parseDynamicCore(source, length, true, false);
 }
 
 export function parseDynamicEager(source: u32, length: u32): u32 {
-  return parseDynamicCore(source, length, false, true);
+  return parseDynamic(source, length);
 }
 
 export function parseDynamicEagerTrusted(source: u32, length: u32): u32 {
-  return parseDynamicCore(source, length, true, true);
+  return parseDynamicTrusted(source, length);
 }
 
 /**

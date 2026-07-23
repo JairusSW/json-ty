@@ -1,5 +1,5 @@
 import ts from "typescript";
-import { jsonArrayElementType, schemaNameForRootArray, schemaNameForType } from "./program-analyzer.js";
+import { jsonArrayElementType, schemaNameForRootArray, schemaNameForRootValue, schemaNameForType } from "./program-analyzer.js";
 
 const JSON_TY_MODULES = new Set(["json-ty", "@jairussw/json-ty"]);
 const JSON_TY_DECORATORS = new Set(["json", "serializable", "alias", "omit", "omitnull", "omitif", "optional", "lazy", "eager", "raw"]);
@@ -44,14 +44,7 @@ function jsonTyDecoratorName(node: ts.Decorator, bindings: ReadonlyMap<string, s
 }
 
 function isSchemaMarkerCall(node: ts.CallExpression, jsonIdentifiers: ReadonlySet<string>): boolean {
-  return (
-    node.arguments.length === 0 &&
-    node.typeArguments?.length === 1 &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    node.expression.name.text === "schema" &&
-    ts.isIdentifier(node.expression.expression) &&
-    jsonIdentifiers.has(node.expression.expression.text)
-  );
+  return node.arguments.length === 0 && node.typeArguments?.length === 1 && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "schema" && ts.isIdentifier(node.expression.expression) && jsonIdentifiers.has(node.expression.expression.text);
 }
 
 function isDynamicFacadeTypeNode(node: ts.TypeNode, identifiers: ReadonlySet<string>): boolean {
@@ -70,6 +63,7 @@ function schemaName(checker: ts.TypeChecker, node: ts.TypeNode): string {
     if (!element) throw new Error(`json-ty cannot name array element type ${checker.typeToString(type)}`);
     return schemaNameForRootArray(checker, element, jsonArrayElement ? "json-array" : "array");
   }
+  if (!(type.flags & ts.TypeFlags.Object)) return schemaNameForRootValue(checker, type);
   return schemaNameForType(checker, type);
 }
 
@@ -103,9 +97,7 @@ export function createJsonTyTransformer(program: ts.Program, options: JsonTyTran
   return (context) => {
     const factory = context.factory;
     return (sourceFile) => {
-      const runtimeModule = typeof options.runtimeModule === "function"
-        ? options.runtimeModule(sourceFile)
-        : options.runtimeModule;
+      const runtimeModule = typeof options.runtimeModule === "function" ? options.runtimeModule(sourceFile) : options.runtimeModule;
       const jsonIdentifiers = importedJsonIdentifiers(sourceFile);
       const jsonTyBindings = importedJsonTyBindings(sourceFile);
       let changed = false;

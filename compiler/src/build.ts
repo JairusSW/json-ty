@@ -11,7 +11,7 @@ import { analyzeProgram, createProgramFromConfig } from "./program-analyzer.js";
 
 // Bump whenever emitted AssemblyScript or host bindings change, independently
 // of the schema-IR version, so an existing project never reuses stale Wasm.
-const CODEGEN_VERSION = 8;
+const CODEGEN_VERSION = 10;
 
 export interface BuildProjectOptions {
   configPath: string;

@@ -1,7 +1,7 @@
 const BACK_SLASH: u8 = 0x5c;
 const QUOTE: u8 = 0x22;
 
-// Retained UTF-8 span scanner adapted from json-as's SWAR field-string path.
+// Retained UTF-8 SWAR field-string span scanner.
 //
 // Return layout:
 //   high 32 bits: pointer immediately after the closing quote
@@ -106,7 +106,7 @@ function result(next: usize, escaped: bool): u64 {
 /**
  * Scan one quoted JSON string as retained UTF-8.
  *
- * The wide pre-scan preserves json-as's first-word-before-second ordering,
+ * The wide pre-scan preserves first-word-before-second ordering,
  * 16-byte clean stride, 8-byte remainder stride, candidate confirmation, and
  * scalar escape handling. Strict mode additionally makes every non-ASCII byte
  * a scalar-validation candidate; trusted mode relies on host UTF-8 ingress.

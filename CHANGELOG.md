@@ -20,4 +20,4 @@ settle.
 - deterministic public `JSON.dispose(value)` document release
 - SIMD/SWAR/scalar parser kernels and shortest binary64 serialization
 - RFC, differential fuzz, generated-project, ABI, lifetime, and parity suites
-- json-as-style overview and classic benchmark charts
+- overview and classic benchmark charts

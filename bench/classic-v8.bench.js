@@ -71,7 +71,7 @@ function wrapPoet(value) {
   return output;
 }
 
-// Match json-as's ChangingPayloads discipline for fixtures small enough to
+// Rotate same-shape payloads for fixtures small enough to
 // keep four resident copies. Setup and UTF-8 encoding remain outside timing.
 const rawEncoded = rotateInputs ? sources.map(encodeUtf8) : [fileBytes, fileBytes, fileBytes, fileBytes];
 const typedEncoded = corpus === "poet" ? rawEncoded.map(wrapPoet) : rawEncoded;

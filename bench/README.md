@@ -5,7 +5,7 @@ module with the stub runtime, runs the Node benchmark, and renders the overview
 charts. Set `JSON_TY_BENCH_MS` to change the target measurement time per series
 (the default is 250 ms).
 
-The seven payload classes and display sizes match json-as's overview suite. The
+The seven payload classes and display sizes match the comparison overview. The
 medium and large fixtures are deterministic nested API/repository payloads. Each
 serializer is checked for semantic equality before timing.
 
@@ -90,7 +90,7 @@ SIMD artifact, runs all nine minified corpora in the d8/V8 shell with
 orchestrate processes and write the report; both the native loop and the Wasm
 loop execute entirely inside d8.
 
-The runner follows json-as's anti-elision setup: four same-shape payloads with
+The runner uses an anti-elision setup: four same-shape payloads with
 different string values are prepared outside timing, inputs rotate each
 iteration, Wasm results flow through mutable linear-memory/global state, and
 native results flow through a stateful JavaScript checksum. Fixtures above
@@ -160,10 +160,10 @@ Additional full-report charts:
 - `rfc-coverage.{svg,png}`: all 318 JSONTestSuite fixtures by tier and expected
   outcome
 
-Charts use the json-as palette and layout conventions with json-ty series and
+Charts use a shared palette and layout conventions with json-ty series and
 terminology. PNG output has an explicit white background and 3× density; SVGs
 are copied to `benchmark/charts/` for the README and package.
 
-Classic charts use the json-as palette, typography, vertical value labels, and
+Classic charts use the shared palette, typography, vertical value labels, and
 metadata subtitle. Their axis stays linear unless the shared sparse-outlier
 detector finds a genuinely huge (at least 4×) upper-tail discontinuity.

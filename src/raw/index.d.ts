@@ -1,4 +1,4 @@
-export type PrimitiveTypeRef = { kind: "number" | "boolean" | "string" };
+export type PrimitiveTypeRef = { kind: "number" | "boolean" | "string" | "null" };
 export interface ObjectTypeRef {
   kind: "object";
   typeName: string;
@@ -30,11 +30,7 @@ export interface FieldDecorators {
   raw?: boolean;
   codec?: string;
 }
-export type OmitIfExpression =
-  | { kind: "literal"; value: number | boolean }
-  | { kind: "field"; name: string }
-  | { kind: "unary"; operator: "!" | "+" | "-"; operand: OmitIfExpression }
-  | { kind: "binary"; operator: "+" | "-" | "*" | "/" | "%" | "<" | "<=" | ">" | ">=" | "==" | "!=" | "&&" | "||"; left: OmitIfExpression; right: OmitIfExpression };
+export type OmitIfExpression = { kind: "literal"; value: number | boolean } | { kind: "field"; name: string } | { kind: "unary"; operator: "!" | "+" | "-"; operand: OmitIfExpression } | { kind: "binary"; operator: "+" | "-" | "*" | "/" | "%" | "<" | "<=" | ">" | ">=" | "==" | "!=" | "&&" | "||"; left: OmitIfExpression; right: OmitIfExpression };
 
 export interface FieldLayout {
   name: string;
@@ -52,7 +48,7 @@ export interface FieldLayout {
 
 export interface SchemaLayout<T extends object = Record<string, unknown>> {
   name: string;
-  root?: "array" | "json-array";
+  root?: "array" | "json-array" | "value";
   fields: FieldLayout[];
   recordSize: number;
   bitmapWords: number;
@@ -108,6 +104,7 @@ export class RawNodeBinding {
   stringify<T extends object>(schema: SchemaLayout<T>, value: T): string;
   stringifyWasm<T extends object>(schema: SchemaLayout<T>, value: T): string;
   stringifyJS<T extends object>(schema: SchemaLayout<T>, value: T): string;
+  /** Builds the complete graph eagerly unless `eager: false` explicitly selects retained spans. */
   parseDynamic(input: string | Uint8Array, options?: { plain?: false; eager?: boolean; validate?: true }): DynamicValueView;
   parseDynamic(input: string | Uint8Array, options: { plain: true }): unknown;
   stringifyDynamic(value: DynamicValueView | unknown): string | undefined;

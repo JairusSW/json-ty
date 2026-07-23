@@ -7,7 +7,7 @@ function append4Overflow(value: u64, chunk: u64): bool {
   return value > (U64.MAX_VALUE - chunk) / 10_000;
 }
 
-// Preserve json-as's array tuning: parse4 + scalar. Mixed-width array elements
+// Preserve the array tuning: parse4 + scalar. Mixed-width array elements
 // make an 8-byte probe hit a comma too often to amortize validation.
 @inline
 function parseU64Element(start: usize, end: usize, destination: usize): usize {
@@ -83,4 +83,3 @@ export function deserializeU64Array_SWAR(
   }
   return 0;
 }
-

@@ -47,12 +47,7 @@ function isDynamicFacadeTypeNode(node: ts.TypeNode, imports: ReadonlyMap<string,
 function isSchemaMarkerCall(node: ts.CallExpression, imports: ReadonlyMap<string, string>): boolean {
   if (node.typeArguments?.length !== 1 || node.arguments.length !== 0) return false;
   const expression = node.expression;
-  return (
-    ts.isPropertyAccessExpression(expression) &&
-    expression.name.text === "schema" &&
-    ts.isIdentifier(expression.expression) &&
-    imports.get(expression.expression.text) === "JSON"
-  );
+  return ts.isPropertyAccessExpression(expression) && expression.name.text === "schema" && ts.isIdentifier(expression.expression) && imports.get(expression.expression.text) === "JSON";
 }
 
 function decoratorInfo(node: ts.Node, imports: ReadonlyMap<string, string>): Array<{ name: string; call?: ts.CallExpression }> {
@@ -101,11 +96,7 @@ function literalValue(node: ts.Expression | undefined, checker: ts.TypeChecker):
     for (const property of node.properties) {
       if (!ts.isPropertyAssignment(property)) return undefined;
       const name = property.name;
-      if (
-        !ts.isIdentifier(name) &&
-        !ts.isStringLiteralLike(name) &&
-        !ts.isNumericLiteral(name)
-      ) {
+      if (!ts.isIdentifier(name) && !ts.isStringLiteralLike(name) && !ts.isNumericLiteral(name)) {
         return undefined;
       }
       const value = literalValue(property.initializer, checker);
@@ -155,7 +146,7 @@ function classLazyMode(declaration: ts.Declaration, imports: ReadonlyMap<string,
       }
       if (mode) return mode;
     }
-    // Convenience spelling in addition to json-as compatibility:
+    // Convenience spelling for object-style lazy options:
     // @lazy("auto"), @lazy({ auto: true }), or @lazy({ mode: "auto" }).
     if (decorator.name === "lazy" && decorator.call) {
       const mode = lazyModeValue(decorator.call.arguments[0]);
@@ -257,19 +248,8 @@ const OMIT_BINARY_OPERATORS = new Map<ts.SyntaxKind, Extract<OmitIfExpression, {
   [ts.SyntaxKind.BarBarToken, "||"],
 ]);
 
-function compileOmitIfPlan(
-  text: string,
-  parameter: string,
-  fields: readonly SchemaField[],
-  location: string,
-): OmitIfExpression {
-  const source = ts.createSourceFile(
-    "json-ty-omitif.ts",
-    `const __jsonTyPredicate = (${text});`,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+function compileOmitIfPlan(text: string, parameter: string, fields: readonly SchemaField[], location: string): OmitIfExpression {
+  const source = ts.createSourceFile("json-ty-omitif.ts", `const __jsonTyPredicate = (${text});`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const statement = source.statements[0];
   if (!statement || !ts.isVariableStatement(statement)) throw new Error(`${location} has an invalid @omitif expression`);
   const initializer = statement.declarationList.declarations[0]?.initializer;
@@ -283,26 +263,13 @@ function compileOmitIfPlan(
     if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === parameter) {
       const field = fields.find((candidate) => candidate.name === node.name.text);
       if (!field) throw new Error(`${location} references unknown field ${node.name.text}`);
-      if (
-        (field.kind !== "number" && field.kind !== "boolean") ||
-        field.nullable ||
-        field.hostManaged ||
-        (typeof field.defaultValue !== "number" && typeof field.defaultValue !== "boolean")
-      ) {
-        throw new Error(
-          `${location} can compile @omitif field reads only for non-nullable number/boolean fields with primitive defaults; ${node.name.text} is not eligible`,
-        );
+      if ((field.kind !== "number" && field.kind !== "boolean") || field.nullable || field.hostManaged || (typeof field.defaultValue !== "number" && typeof field.defaultValue !== "boolean")) {
+        throw new Error(`${location} can compile @omitif field reads only for non-nullable number/boolean fields with primitive defaults; ${node.name.text} is not eligible`);
       }
       return { kind: "field", name: node.name.text };
     }
     if (ts.isPrefixUnaryExpression(node)) {
-      const operator = node.operator === ts.SyntaxKind.ExclamationToken
-        ? "!"
-        : node.operator === ts.SyntaxKind.PlusToken
-          ? "+"
-          : node.operator === ts.SyntaxKind.MinusToken
-            ? "-"
-            : undefined;
+      const operator = node.operator === ts.SyntaxKind.ExclamationToken ? "!" : node.operator === ts.SyntaxKind.PlusToken ? "+" : node.operator === ts.SyntaxKind.MinusToken ? "-" : undefined;
       if (!operator) throw new Error(`${location} uses an unsupported @omitif unary operator`);
       return { kind: "unary", operator, operand: visit(node.operand) };
     }
@@ -410,10 +377,20 @@ export function schemaNameForRootArray(checker: ts.TypeChecker, element: ts.Type
   return `${base}${facade === "json-array" ? "JsonArray" : "Array"}`;
 }
 
+export function schemaNameForRootValue(checker: ts.TypeChecker, input: ts.Type): string {
+  const { type, nullable } = unwrapNullable(input);
+  const kind = type.flags & ts.TypeFlags.StringLike ? "string" : type.flags & ts.TypeFlags.NumberLike ? "number" : type.flags & ts.TypeFlags.BooleanLike ? "boolean" : type.flags & ts.TypeFlags.Null ? "null" : undefined;
+  if (!kind) {
+    throw new Error(`json-ty cannot create a primitive root schema for ${checker.typeToString(input)}`);
+  }
+  return `${nullable ? "nullable" : ""}${nullable ? kind[0]!.toUpperCase() + kind.slice(1) : kind}Value`;
+}
+
 export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptions = {}): ProgramAnalysis {
   const checker = program.getTypeChecker();
   const schemas = new Map<string, ObjectSchema>();
   const rootArrays = new Map<string, { element: TypeRef; facade: "array" | "json-array" }>();
+  const rootValues = new Map<string, { type: TypeRef; nullable: boolean }>();
   const reachableTypes = new Map<ts.Type, string>();
   const schemaNameOwners = new Map<string, { identity: string; declaration: ts.Declaration }>();
   const queued: Array<{ type: ts.Type; declaration: ts.Declaration }> = [];
@@ -427,11 +404,7 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     if (sourceFile.isDeclarationFile) continue;
     const imports = jsonTyImports(sourceFile);
     const discover = (node: ts.Node): void => {
-      if (
-        (ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node)) &&
-        node.name &&
-        decoratorInfo(node, imports).some((item) => item.name === "json" || item.name === "serializable")
-      ) {
+      if ((ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name && decoratorInfo(node, imports).some((item) => item.name === "json" || item.name === "serializable")) {
         explicitSchemaDeclarations.add(node);
         // Generic declarations become concrete schemas when a marked root or
         // dependency supplies type arguments (for example Box<number>).
@@ -454,23 +427,14 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     const name = symbol ? schemaNameForType(checker, type) : undefined;
     const selected = declaration ?? symbol?.valueDeclaration ?? symbol?.declarations?.[0];
     if (!name || !selected) throw new Error(`Anonymous object types require a named declaration`);
-    const identity = checker.typeToString(
-      type,
-      selected,
-      ts.TypeFormatFlags.UseFullyQualifiedType | ts.TypeFormatFlags.NoTruncation,
-    );
+    const identity = checker.typeToString(type, selected, ts.TypeFormatFlags.UseFullyQualifiedType | ts.TypeFormatFlags.NoTruncation);
     const owner = schemaNameOwners.get(name);
     if (owner && (owner.declaration !== selected || owner.identity !== identity)) {
-      throw new Error(
-        `Schema name collision for ${name}: ${owner.identity} and ${identity}. ` +
-          `json-ty requires unambiguous generated schema names; rename one declaration or expose it through a distinct named alias.`,
-      );
+      throw new Error(`Schema name collision for ${name}: ${owner.identity} and ${identity}. ` + `json-ty requires unambiguous generated schema names; rename one declaration or expose it through a distinct named alias.`);
     }
     schemaNameOwners.set(name, { identity, declaration: selected });
     if (!explicitSchemaDeclarations.has(selected)) {
-      throw new Error(
-        `Structured JSON type ${checker.typeToString(type)} is not an explicit schema; add @json to its class or JSON.schema<${checker.typeToString(type)}>() for an interface/type alias`,
-      );
+      throw new Error(`Structured JSON type ${checker.typeToString(type)} is not an explicit schema; add @json to its class or JSON.schema<${checker.typeToString(type)}>() for an interface/type alias`);
     }
     if (!reachableTypes.has(type)) {
       reachableTypes.set(type, name);
@@ -480,6 +444,9 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
   };
 
   const toTypeRef = (input: ts.Type): { ref: TypeRef; nullable: boolean; optional: boolean } => {
+    if (input.flags & ts.TypeFlags.Null) {
+      return { ref: { kind: "null" }, nullable: false, optional: false };
+    }
     if (input.isUnion()) {
       let nullable = false;
       let optional = false;
@@ -611,7 +578,21 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
               }
               rootArrays.set(rootName, { element: elementRef, facade });
             }
-          } else if (normalized.flags & ts.TypeFlags.Object) enqueue(normalized);
+          } else if (normalized.flags & ts.TypeFlags.Object) {
+            enqueue(normalized);
+          } else {
+            const root = toTypeRef(type);
+            if (root.ref.kind !== "string" && root.ref.kind !== "number" && root.ref.kind !== "boolean" && root.ref.kind !== "null") {
+              throw new Error(`Unsupported JSON root type ${checker.typeToString(type)}`);
+            }
+            const rootName = schemaNameForRootValue(checker, type);
+            const existing = rootValues.get(rootName);
+            const candidate = { type: root.ref, nullable: root.nullable };
+            if (existing && JSON.stringify(existing) !== JSON.stringify(candidate)) {
+              throw new Error(`Root value schema name collision for ${rootName}`);
+            }
+            rootValues.set(rootName, candidate);
+          }
         }
       }
       ts.forEachChild(node, visit);
@@ -630,6 +611,23 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
           name: "value",
           kind: "array",
           type: { kind: "array", element: array.element, facade: array.facade },
+        },
+      ],
+    });
+  }
+
+  for (const [name, value] of rootValues) {
+    if (schemas.has(name)) throw new Error(`Root value schema name collides with ${name}`);
+    schemas.set(name, {
+      name,
+      root: "value",
+      declarationKind: "type",
+      fields: [
+        {
+          name: "value",
+          kind: value.type.kind,
+          type: value.type,
+          nullable: value.nullable,
         },
       ],
     });
@@ -670,12 +668,7 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     for (const field of fields) {
       const decorators = field.decorators;
       if (decorators?.omitIf) {
-        decorators.omitIfPlan = compileOmitIfPlan(
-          decorators.omitIf,
-          decorators.omitIfParameter ?? "self",
-          fields,
-          `${name}.${field.name}`,
-        );
+        decorators.omitIfPlan = compileOmitIfPlan(decorators.omitIf, decorators.omitIfParameter ?? "self", fields, `${name}.${field.name}`);
       }
     }
     const classDecorators = decoratorInfo(declaration, imports);

@@ -1,4 +1,4 @@
-// Compact Eisel-Lemire conversion ported from json-as. This specialization
+// Compact Eisel-Lemire conversion. This specialization
 // covers decimal powers [-22, 22], avoiding the exact host fallback for common
 // 17-19 digit payloads whose significands exceed 2^53.
 

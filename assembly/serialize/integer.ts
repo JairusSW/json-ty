@@ -1,5 +1,5 @@
-// Fast u32 -> UTF-8 serialization adapted from json-as's itoa-fast width
-// ladder. V8 lowers division by these constants to multiply/shift sequences,
+// Fast u32 -> UTF-8 serialization with a digit-pair width ladder. V8 lowers
+// division by these constants to multiply/shift sequences,
 // while independent digit-pair lookups can be scheduled in parallel.
 
 const DIGIT_PAIRS: usize = memory.data(100 * 2);

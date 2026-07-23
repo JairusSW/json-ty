@@ -13,7 +13,7 @@ function zeroByteCandidates(value: u64): u64 {
 }
 
 /**
- * Candidate mask for JSON-escapable UTF-8 bytes. As in json-as, candidates
+ * Candidate mask for JSON-escapable UTF-8 bytes. Candidates
  * are confirmed scalarly; borrow propagation may over-report a later lane.
  */
 @inline
@@ -343,4 +343,3 @@ export function serializeRetainedEscapedString_SWAR(
   store<u8>(output, 0x22);
   return true;
 }
-

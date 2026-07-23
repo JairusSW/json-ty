@@ -45,7 +45,7 @@ export function claimWriter(length: u32): usize {
 }
 
 
-// json-as's selected f64[] writer reserves once, emits a uniform
+// The specialized f64[] writer reserves once, emits a uniform
 // number+comma loop, then overwrites the last comma with `]`. Keeping the same
 // shape here removes two capacity checks and the separator branch per value.
 export function writeF64Array(data: usize, length: u32): bool {
@@ -159,7 +159,7 @@ export function writeF64(value: f64): bool {
 
   // TypeScript `number` fields are f64, but JSON payloads commonly hold small
   // integers. Avoid dtoa and its UTF-16-to-UTF-8 compaction for exact u32/i32
-  // values, using json-as's digit-pair width ladder directly in the output.
+  // values, using a digit-pair width ladder directly in the output.
   if (value >= 0.0 && value <= 4_294_967_295.0 && value == <f64>(<u32>value)) {
     const integer = <u32>value;
     if (writerCursor + 10 <= writerEnd) {

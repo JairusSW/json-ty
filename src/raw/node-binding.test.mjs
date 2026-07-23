@@ -337,9 +337,10 @@ const dynamicGraphBeforeAccess = runtime.u32[(dynamicDocument + 16) >>> 2];
 assert.equal(dynamic.type, "object");
 assert.equal(dynamic.get("name").value, "café");
 const dynamicItems = dynamic.get("items");
-assert.ok(
-  runtime.u32[(dynamicDocument + 16) >>> 2] > dynamicGraphBeforeAccess,
-  "nested dynamic containers materialize only when accessed",
+assert.equal(
+  runtime.u32[(dynamicDocument + 16) >>> 2],
+  dynamicGraphBeforeAccess,
+  "dynamic parsing eagerly materializes the complete graph by default",
 );
 assert.equal(dynamicItems.at(1).value, true);
 assert.equal(dynamicItems.at(2).value, null);
@@ -351,6 +352,16 @@ assert.deepEqual(dynamic.toObject(), JSON.parse(dynamicInput));
 const dynamicChild = dynamic.get("items");
 dynamic.dispose();
 assert.throws(() => dynamicChild.length, ReferenceError);
+
+const retainedDynamic = runtime.parseDynamic(dynamicInput, { eager: false });
+const retainedDocument = retainedDynamic._document();
+const retainedGraphBeforeAccess = runtime.u32[(retainedDocument + 16) >>> 2];
+assert.equal(retainedDynamic.get("items").at(1).value, true);
+assert.ok(
+  runtime.u32[(retainedDocument + 16) >>> 2] > retainedGraphBeforeAccess,
+  "retained dynamic parsing is explicitly selected with eager: false",
+);
+retainedDynamic.dispose();
 
 assert.deepEqual(runtime.parseDynamic(Buffer.from('[5e-324,{"ok":false}]'), { plain: true }), [5e-324, { ok: false }]);
 const eagerDynamic = runtime.parseDynamic(Buffer.from(dynamicInput), { eager: true });
@@ -453,6 +464,7 @@ assert.equal(
 );
 const deferredDense = growableRuntime.parseDynamic(
   Buffer.from(`{"items":${denseArraySource}}`),
+  { eager: false },
 );
 const newerDynamic = growableRuntime.parseDynamic(Buffer.from('{"newer":true}'));
 assert.equal(

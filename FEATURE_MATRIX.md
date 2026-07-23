@@ -1,11 +1,11 @@
 # Feature and optimization matrix
 
 This matrix records the implemented contract rather than implying full API
-identity with `json-as` or the JavaScript standard library.
+identity with the JavaScript standard library.
 
 | Area | json-ty status | Notes |
 |---|---|---|
-| typed primitives and records | implemented | flat relative-offset layout |
+| typed primitive roots and records | implemented | string, number, boolean, null, array, tuple, and record roots |
 | nullable/optional/default fields | implemented | presence/null bitmaps and generated defaults |
 | aliases, omit, omit-null, omit-if | implemented | pure omit-if expression required |
 | on-demand typed lazy parsing | implemented | `none`/`auto`/`all`, field overrides, `JSON.Lazy<T>`, one first-access Wasm call, range passthrough |
@@ -18,7 +18,7 @@ identity with `json-as` or the JavaScript standard library.
 | recursive records | implemented | generated depth guard |
 | discriminated unions | implemented | shared literal discriminator required |
 | `JSON.Array<T>` | implemented | zero-copy facade with indexed overlay |
-| `JSON.Value`/`Obj`/`Arr` | implemented | typed calls route to tagged dynamic facades plus detachment |
+| `JSON.Value`/`Obj`/`Arr` | implemented | eager tagged graph by default; retained spans require `eager: false` |
 | `JSON.Raw` | implemented on host paths | validated raw insertion; typed `@raw` routes host-side |
 | boxed primitives | implemented on host dynamic path | native-compatible unboxing |
 | UTF-8 and Unicode validation | implemented | lone-surrogate compatibility bridge for JS strings |
@@ -47,13 +47,7 @@ identity with `json-as` or the JavaScript standard library.
 | naive/SWAR no-SIMD builds | default + correctness-tested | SWAR is default; naive is the RFC oracle; SIMD is explicit |
 | CommonJS artifact | not packaged | current package is ESM-first |
 
-Compared with `json-as`, the parser/writer kernels retain the important SIMD,
-default, span, number, string, and schema-specialization ideas, but the runtime
-representation is intentionally different: `json-ty` produces flat manually
-managed documents for JavaScript views instead of AssemblyScript managed object
-graphs. Collection and codec additions must preserve that invariant.
-
 The direct SIMD parity suite currently passes all 12 primitive-record,
 small/medium/large, Canada, and Poet parse/serialize gates at a minimum 0.90x
-ratio. Results are recorded in `benchmark/results/core-port-2026-07-18.md` and
-machine-readable form in `build/logs/json-as-parity.json`.
+ratio. Results are recorded in machine-readable form in
+`build/logs/json-as-parity.json`.

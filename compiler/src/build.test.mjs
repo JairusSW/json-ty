@@ -215,4 +215,16 @@ numberFacade.set(1, 9);
 assert.equal(runtime.stringify(NumberFacade, numberFacade), "[3,9,5]");
 numberFacade.dispose();
 
+for (const [schemaName, source, expected] of [
+  ["stringValue", '"hello"', "hello"],
+  ["numberValue", "42.5", 42.5],
+  ["booleanValue", "true", true],
+  ["nullValue", "null", null],
+]) {
+  const schema = schemas.get(schemaName);
+  assert.equal(runtime.parse(schema, source), expected, `${schemaName} parse`);
+  assert.equal(runtime.stringify(schema, expected), source, `${schemaName} stringify`);
+}
+assert.throws(() => runtime.parse(schemas.get("stringValue"), "42"), SyntaxError);
+
 console.log("json-tyc build/cache integration: all tests passed");

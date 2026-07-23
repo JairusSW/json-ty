@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { ChartJSNodeCanvas } from "chartjs-node-canvas";
 import { BASE, INK, OVERVIEW_BARS } from "./lib/palette.mjs";
 import { withAdaptiveLogScale } from "./lib/chart-outliers.mjs";
+import { CHART_BOTTOM_PADDING, measuredChartLabels } from "./lib/chart-layout.mjs";
 
 const TIER_COLORS = [
   { bg: "rgba(252,171,16,0.85)", border: BASE.orange },
@@ -77,7 +78,7 @@ function groupedConfig({ labels, datasets, title, axisTitle, report, horizontal 
   return {
     type: "bar",
     data: {
-      labels,
+      labels: measuredChartLabels(labels),
       datasets: datasets.map((dataset, index) => ({
         ...dataset,
         backgroundColor: dataset.color?.bg ?? OVERVIEW_BARS[index % OVERVIEW_BARS.length].bg,
@@ -88,7 +89,7 @@ function groupedConfig({ labels, datasets, title, axisTitle, report, horizontal 
     options: {
       responsive: true,
       indexAxis: horizontal ? "y" : "x",
-      layout: { padding: { right: horizontal ? 90 : 0 } },
+      layout: { padding: { bottom: CHART_BOTTOM_PADDING, right: horizontal ? 90 : 0 } },
       plugins: {
         title: { display: true, text: title, font: { size: 20, weight: "bold" } },
         legend: { position: "top", labels: { font: { size: 14, weight: "bold" }, padding: 16 } },

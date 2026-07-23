@@ -526,7 +526,7 @@ function generateArrayParser(type: TypeRef & { kind: "array" }, name: string, la
     // This gives flat contiguous output without the old full validation/count
     // scan or pathological permanent upper-bound allocations.
     const minimumWidth = type.element.kind === "boolean" ? 5 : type.element.kind === "number" ? 2 : 3;
-    const elementKind = type.element.kind === "number" ? 1 : type.element.kind === "boolean" ? 2 : type.element.kind === "string" ? 3 : type.element.kind === "object" ? 4 : type.element.kind === "union" ? 7 : 5;
+    const elementKind = type.element.kind === "null" ? 0 : type.element.kind === "number" ? 1 : type.element.kind === "boolean" ? 2 : type.element.kind === "string" ? 3 : type.element.kind === "object" ? 4 : type.element.kind === "union" ? 7 : 5;
     return `
 function parse${name}(cursor: usize, end: usize, destination: usize): usize {
   if (graphDepth >= 256) return graphFailure(cursor);

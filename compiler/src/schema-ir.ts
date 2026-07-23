@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_IR_VERSION = 5;
+export const SCHEMA_IR_VERSION = 6;
 
 export type LazyMode = "none" | "auto" | "all";
 
-export type PrimitiveFieldKind = "number" | "boolean" | "string";
+export type PrimitiveFieldKind = "number" | "boolean" | "string" | "null";
 
 export interface PrimitiveTypeRef {
   kind: PrimitiveFieldKind;
@@ -37,13 +37,7 @@ export interface UnionTypeRef {
 export type TypeRef = PrimitiveTypeRef | ObjectTypeRef | ArrayTypeRef | UnionTypeRef;
 
 /** JSON-compatible compile-time initializer retained as an immutable schema constant. */
-export type JsonDefault =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonDefault[]
-  | { readonly [key: string]: JsonDefault };
+export type JsonDefault = string | number | boolean | null | JsonDefault[] | { readonly [key: string]: JsonDefault };
 
 export type OmitIfExpression =
   | { kind: "literal"; value: number | boolean }
@@ -84,7 +78,7 @@ export interface SchemaField {
 
 export interface ObjectSchema {
   name: string;
-  root?: "array" | "json-array";
+  root?: "array" | "json-array" | "value";
   fields: SchemaField[];
   sourceFile?: string;
   declarationKind?: "class" | "interface" | "type";
@@ -137,7 +131,7 @@ export interface SchemaAbi {
 
 export interface ObjectLayout {
   name: string;
-  root?: "array" | "json-array";
+  root?: "array" | "json-array" | "value";
   recordSize: number;
   bitmapWords: number;
   /** Byte offset of the first null-bitmap word. */
@@ -201,9 +195,7 @@ export function layoutObject(schema: ObjectSchema): ObjectLayout {
         whitespace: fields.length !== 0,
         keyed: fields.length !== 0,
         slow: true,
-        ...(fields.length > 32
-          ? { chunkSize: 32 }
-          : {}),
+        ...(fields.length > 32 ? { chunkSize: 32 } : {}),
       },
       retainsSource,
       hasLazyFields: hasDeferredFields,

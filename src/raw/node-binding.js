@@ -1,47 +1,6 @@
-import {
-  RAW_ASCII_SOURCE,
-  RAW_DOCUMENT,
-  RAW_ROOT,
-  RAW_RUNTIME,
-  RAW_SCHEMA,
-  RAW_SERIALIZED,
-  RAW_STATE,
-  GeneratedViewBase,
-  activeDocument,
-  disposeGeneratedView,
-  fieldBitmapByte,
-  fieldBitmapMask,
-  generatedViewDocument,
-  hasAnyViewOverlay,
-  hasViewOverlay,
-  initializeView,
-  invalidateViewSerialization,
-  materializeViewField,
-  readViewOverlay,
-  schemaHasComposites,
-  setHidden,
-  setInternal,
-  syncViewEnumerable,
-  writeViewOverlay,
-} from "./view-state.js";
+import { RAW_ASCII_SOURCE, RAW_DOCUMENT, RAW_ROOT, RAW_RUNTIME, RAW_SCHEMA, RAW_SERIALIZED, RAW_STATE, GeneratedViewBase, activeDocument, disposeGeneratedView, fieldBitmapByte, fieldBitmapMask, generatedViewDocument, hasAnyViewOverlay, hasViewOverlay, initializeView, invalidateViewSerialization, materializeViewField, readViewOverlay, schemaHasComposites, setHidden, setInternal, syncViewEnumerable, writeViewOverlay } from "./view-state.js";
 
-export {
-  RAW_ASCII_SOURCE,
-  RAW_DOCUMENT,
-  RAW_OVERLAY,
-  RAW_ROOT,
-  RAW_RUNTIME,
-  RAW_SCHEMA,
-  RAW_SERIALIZED,
-  RAW_STATE,
-  GeneratedViewBase,
-  activeDocument,
-  disposeGeneratedView,
-  generatedViewDocument,
-  hasViewOverlay,
-  readViewOverlay,
-  writeViewOverlay,
-} from "./view-state.js";
+export { RAW_ASCII_SOURCE, RAW_DOCUMENT, RAW_OVERLAY, RAW_ROOT, RAW_RUNTIME, RAW_SCHEMA, RAW_SERIALIZED, RAW_STATE, GeneratedViewBase, activeDocument, disposeGeneratedView, generatedViewDocument, hasViewOverlay, readViewOverlay, writeViewOverlay } from "./view-state.js";
 
 const PAGE_SIZE = 64 * 1024;
 const DEFAULT_CONTROL = PAGE_SIZE;
@@ -60,7 +19,7 @@ const STRING_IS_WELL_FORMED = String.prototype.isWellFormed;
 const SURROGATE_PATTERN = /[\uD800-\uDFFF]/;
 const INPUT_RAW = 0;
 const INPUT_JSON = 1;
-const INPUT_ROOT_ARRAY = 2;
+const INPUT_ROOT_VALUE = 2;
 
 function alignPage(bytes) {
   return Math.ceil(bytes / PAGE_SIZE) * PAGE_SIZE;
@@ -195,8 +154,9 @@ export class RawNodeBinding {
     this._parseDynamic = this.exports.parseDynamic;
     this._parseDynamicTrusted = this.exports.parseDynamicTrusted ?? this._parseDynamic;
     this._parseDynamicEager = this.exports.parseDynamicEager ?? this._parseDynamic;
-    this._parseDynamicEagerTrusted =
-      this.exports.parseDynamicEagerTrusted ?? this._parseDynamicEager;
+    this._parseDynamicEagerTrusted = this.exports.parseDynamicEagerTrusted ?? this._parseDynamicEager;
+    this._parseDynamicRetained = this.exports.parseDynamicRetained;
+    this._parseDynamicRetainedTrusted = this.exports.parseDynamicRetainedTrusted ?? this._parseDynamicRetained;
     this._materializeDynamic = this.exports.materializeDynamic;
     this._materializeDynamicTree = this.exports.materializeDynamicTree;
     this._serializeDynamic = this.exports.serializeDynamic;
@@ -312,8 +272,8 @@ export class RawNodeBinding {
     return length;
   }
 
-  _writeRootArrayInput(input) {
-    if (typeof input === "string" && this._scratchInputValid && this._scratchInputMode === INPUT_ROOT_ARRAY && this._scratchInputString === input) {
+  _writeRootValueInput(input) {
+    if (typeof input === "string" && this._scratchInputValid && this._scratchInputMode === INPUT_ROOT_VALUE && this._scratchInputString === input) {
       return this._scratchInputLength;
     }
 
@@ -327,7 +287,7 @@ export class RawNodeBinding {
       }
       length = this._writeUtf8(input, this.scratch + 9, this.scratchCapacity - 10);
       this._scratchInputValid = true;
-      this._scratchInputMode = INPUT_ROOT_ARRAY;
+      this._scratchInputMode = INPUT_ROOT_VALUE;
       this._scratchInputString = source;
       this._scratchInputSource = input;
       this._scratchInputLength = length + 10;
@@ -373,8 +333,9 @@ export class RawNodeBinding {
   parse(schema, input) {
     const stringInput = typeof input === "string";
     const trustedStringInput = stringInput;
-    const rootArray = schema.root !== undefined;
-    const length = rootArray ? this._writeRootArrayInput(input) : this._writeInput(input, false, INPUT_JSON);
+    const rootSchema = schema.root !== undefined;
+    const rootArray = schema.root === "array" || schema.root === "json-array";
+    const length = rootSchema ? this._writeRootValueInput(input) : this._writeInput(input, false, INPUT_JSON);
     const parserKey = `${schema.name}:${trustedStringInput ? "trusted" : "strict"}`;
     let parse = this._lastParseSchema === schema && this._lastParseTrusted === trustedStringInput ? this._lastParser : (this._parsers.get(parserKey) ?? this._parsers.get(schema.name));
     if (parse === undefined || parse === null) {
@@ -393,12 +354,17 @@ export class RawNodeBinding {
     if (document === 0) {
       const status = this._result(0);
       const fault = this._result(4);
-      throw new SyntaxError(`Raw parse failed with status ${status} at byte ${rootArray ? Math.max(0, fault - 9) : fault}`);
+      throw new SyntaxError(`Raw parse failed with status ${status} at byte ${rootSchema ? Math.max(0, fault - 9) : fault}`);
     }
     const root = document + this._result(8);
-    const asciiSource = !rootArray && stringInput && length === this._scratchInputSource.length ? this._scratchInputSource : null;
+    const asciiSource = !rootSchema && stringInput && length === this._scratchInputSource.length ? this._scratchInputSource : null;
     const view = new schema.View(this, document, root, asciiSource);
-    if (!rootArray) return view;
+    if (!rootSchema) return view;
+    if (!rootArray) {
+      const value = view.value;
+      view.dispose();
+      return value;
+    }
     const array = view.value;
     setHidden(array, RAW_ARRAY_OWNER, view);
     const dispose = () => {
@@ -415,33 +381,21 @@ export class RawNodeBinding {
 
   parseDynamic(input, options = {}) {
     if (options.trusted !== undefined) {
-      throw new TypeError(
-        "parseDynamic trusted input is unsupported; validation is mandatory",
-      );
+      throw new TypeError("parseDynamic trusted input is unsupported; validation is mandatory");
     }
     if (options.validate === false) {
-      throw new TypeError(
-        "parseDynamic validation cannot be disabled",
-      );
+      throw new TypeError("parseDynamic validation cannot be disabled");
     }
     if (options.plain) {
       try {
-        const source =
-          typeof input === "string"
-            ? input
-            : input instanceof Uint8Array
-              ? this._fatalDecoder.decode(input)
-              : null;
+        const source = typeof input === "string" ? input : input instanceof Uint8Array ? this._fatalDecoder.decode(input) : null;
         if (source === null) {
           throw new TypeError("Expected a string, Buffer, or Uint8Array");
         }
         return globalThis.JSON.parse(source);
       } catch (error) {
         if (error instanceof SyntaxError) throw error;
-        if (
-          error instanceof TypeError &&
-          (HAS_BUFFER && Buffer.isBuffer(input) || input instanceof Uint8Array)
-        ) {
+        if (error instanceof TypeError && ((HAS_BUFFER && Buffer.isBuffer(input)) || input instanceof Uint8Array)) {
           throw new SyntaxError(`Invalid UTF-8 JSON input: ${error.message}`);
         }
         throw error;
@@ -451,10 +405,14 @@ export class RawNodeBinding {
     const stringInput = typeof input === "string";
     const length = this._writeInput(input, false, INPUT_JSON);
     const trustedInput = stringInput;
-    const parseDynamic = options.eager
+    const retained = options.eager === false;
+    if (retained && typeof this._parseDynamicRetained !== "function") {
+      throw new Error("Retained dynamic JSON was not compiled into this runtime");
+    }
+    const parseDynamic = retained
       ? trustedInput
-        ? this._parseDynamicEagerTrusted
-        : this._parseDynamicEager
+        ? this._parseDynamicRetainedTrusted
+        : this._parseDynamicRetained
       : trustedInput
         ? this._parseDynamicTrusted
         : this._parseDynamic;
@@ -481,12 +439,7 @@ export class RawNodeBinding {
     if (value.state.serialized !== undefined) return value.state.serialized;
     const capacity = this.scratchCapacity - NUMBER_SCRATCH_SIZE;
     this._invalidateScratchInput();
-    this._callWithMemoryRefresh(
-      this._serializeDynamic,
-      document,
-      this.scratch,
-      capacity,
-    );
+    this._callWithMemoryRefresh(this._serializeDynamic, document, this.scratch, capacity);
     const status = this._result(0);
     if (status !== STATUS_OK) {
       throw new RangeError(`Raw dynamic stringify failed with status ${this._result(0)}`);
@@ -500,13 +453,16 @@ export class RawNodeBinding {
 
   stringify(schema, value) {
     if (schema.root !== undefined) {
-      if (!Array.isArray(value) && !(value instanceof JsonArrayView)) {
-        throw new TypeError(`Expected an array for ${schema.name}`);
+      if (schema.root === "array" || schema.root === "json-array") {
+        if (!Array.isArray(value) && !(value instanceof JsonArrayView)) {
+          throw new TypeError(`Expected an array for ${schema.name}`);
+        }
+        const owner = value[RAW_ARRAY_OWNER];
+        const wrapped = owner?.[RAW_RUNTIME] === this ? owner : { value };
+        const output = this._stringifyObject(schema, wrapped);
+        return output.slice(9, -1);
       }
-      const owner = value[RAW_ARRAY_OWNER];
-      const wrapped = owner?.[RAW_RUNTIME] === this ? owner : { value };
-      const output = this._stringifyObject(schema, wrapped);
-      return output.slice(9, -1);
+      return this.stringifyWasm(schema, { value }).slice(9, -1);
     }
     return this._stringifyObject(schema, value);
   }
@@ -616,7 +572,7 @@ export class RawNodeBinding {
       }
       const header = allocate(16, 8);
       const data = allocate(arrayValue.length * stride, Math.min(stride, 8));
-      this.u32[header >>> 2] = element.kind === "number" ? 1 : element.kind === "boolean" ? 2 : element.kind === "string" ? 3 : element.kind === "object" ? 4 : 5;
+      this.u32[header >>> 2] = element.kind === "null" ? 0 : element.kind === "number" ? 1 : element.kind === "boolean" ? 2 : element.kind === "string" ? 3 : element.kind === "object" ? 4 : 5;
       this.u32[(header + 4) >>> 2] = arrayValue.length;
       this.u32[(header + 8) >>> 2] = data - document;
       this.u32[(header + 12) >>> 2] = stride;
@@ -628,7 +584,9 @@ export class RawNodeBinding {
     };
 
     const lowerValue = (type, fieldValue, destination, label) => {
-      if (type.kind === "number") {
+      if (type.kind === "null") {
+        if (fieldValue !== null) throw new TypeError(`${label} must be null`);
+      } else if (type.kind === "number") {
         if (typeof fieldValue !== "number") throw new TypeError(`${label} must be a number`);
         this.f64[destination >>> 3] = fieldValue;
       } else if (type.kind === "boolean") {
@@ -668,12 +626,13 @@ export class RawNodeBinding {
         const mask = fieldBitmapMask(field);
         const bitmapByte = fieldBitmapByte(field);
         this.u32[(recordPointer + bitmapByte) >>> 2] |= mask;
-        if (fieldValue === null) {
+        const fieldType = field.type ?? { kind: field.kind };
+        if (fieldValue === null && fieldType.kind !== "null") {
           if (!field.nullable) throw new TypeError(`${field.name} is not nullable`);
           this.u32[(recordPointer + recordSchema.nullOffset + bitmapByte) >>> 2] |= mask;
           continue;
         }
-        lowerValue(field.type ?? { kind: field.kind }, fieldValue, recordPointer + field.offset, field.name);
+        lowerValue(fieldType, fieldValue, recordPointer + field.offset, field.name);
       }
     };
 
@@ -823,6 +782,7 @@ function readArrayElement(view, type, header, index) {
   const stride = runtime.u32[(header + 12) >>> 2];
   const element = type.elements?.[index] ?? type.element;
   const pointer = data + index * stride;
+  if (element.kind === "null") return null;
   if (element.kind === "number") return runtime.f64[pointer >>> 3];
   if (element.kind === "boolean") return runtime.u32[pointer >>> 2] !== 0;
   if (element.kind === "string") {
@@ -963,15 +923,9 @@ const DYNAMIC_ENTRY_SLOT_OFFSET = 12;
 function dynamicView(runtime, state, slot, asciiSource) {
   let tag = runtime.u32[slot >>> 2];
   if (tag === DYNAMIC_LAZY_ARRAY || tag === DYNAMIC_LAZY_OBJECT) {
-    tag = runtime._callWithMemoryRefresh(
-      runtime._materializeDynamic,
-      state.document,
-      slot,
-    ) >>> 0;
+    tag = runtime._callWithMemoryRefresh(runtime._materializeDynamic, state.document, slot) >>> 0;
     if (tag === 0) {
-      throw new SyntaxError(
-        `Deferred dynamic JSON failed to materialize at byte ${runtime._result(4)}`,
-      );
+      throw new SyntaxError(`Deferred dynamic JSON failed to materialize at byte ${runtime._result(4)}`);
     }
   }
   if (tag === DYNAMIC_ARRAY) return new DynamicArrayView(runtime, state, slot, asciiSource);
@@ -986,15 +940,9 @@ function dynamicSlotToJS(runtime, state, slot, asciiSource) {
   }
   let tag = runtime.u32[slot >>> 2];
   if (tag === DYNAMIC_LAZY_ARRAY || tag === DYNAMIC_LAZY_OBJECT) {
-    tag = runtime._callWithMemoryRefresh(
-      runtime._materializeDynamic,
-      document,
-      slot,
-    ) >>> 0;
+    tag = runtime._callWithMemoryRefresh(runtime._materializeDynamic, document, slot) >>> 0;
     if (tag === 0) {
-      throw new SyntaxError(
-        `Deferred dynamic JSON failed to materialize at byte ${runtime._result(4)}`,
-      );
+      throw new SyntaxError(`Deferred dynamic JSON failed to materialize at byte ${runtime._result(4)}`);
     }
   }
   if (tag === DYNAMIC_NULL) return null;
@@ -1010,12 +958,7 @@ function dynamicSlotToJS(runtime, state, slot, asciiSource) {
   if (tag === DYNAMIC_ARRAY) {
     const result = new Array(length);
     for (let index = 0; index < length; index++) {
-      result[index] = dynamicSlotToJS(
-        runtime,
-        state,
-        entry + DYNAMIC_ARRAY_SLOT_OFFSET,
-        asciiSource,
-      );
+      result[index] = dynamicSlotToJS(runtime, state, entry + DYNAMIC_ARRAY_SLOT_OFFSET, asciiSource);
       entry = document + runtime.u32[entry >>> 2];
     }
     return result;
@@ -1024,12 +967,7 @@ function dynamicSlotToJS(runtime, state, slot, asciiSource) {
     const result = {};
     for (let index = 0; index < length; index++) {
       const key = decodeStringRef(runtime, document, entry, asciiSource);
-      const value = dynamicSlotToJS(
-        runtime,
-        state,
-        entry + DYNAMIC_ENTRY_SLOT_OFFSET,
-        asciiSource,
-      );
+      const value = dynamicSlotToJS(runtime, state, entry + DYNAMIC_ENTRY_SLOT_OFFSET, asciiSource);
       if (key === "__proto__") {
         Object.defineProperty(result, key, {
           value,
@@ -1040,9 +978,7 @@ function dynamicSlotToJS(runtime, state, slot, asciiSource) {
       } else {
         result[key] = value;
       }
-      entry =
-        document +
-        runtime.u32[(entry + DYNAMIC_ENTRY_NEXT_OFFSET) >>> 2];
+      entry = document + runtime.u32[(entry + DYNAMIC_ENTRY_NEXT_OFFSET) >>> 2];
     }
     return result;
   }
@@ -1050,14 +986,8 @@ function dynamicSlotToJS(runtime, state, slot, asciiSource) {
 }
 
 function dynamicTreeToJS(runtime, state, slot, asciiSource) {
-  if ((runtime._callWithMemoryRefresh(
-    runtime._materializeDynamicTree,
-    state.document,
-    slot,
-  ) >>> 0) === 0) {
-    throw new SyntaxError(
-      `Dynamic JSON tree failed to materialize at byte ${runtime._result(4)}`,
-    );
+  if (runtime._callWithMemoryRefresh(runtime._materializeDynamicTree, state.document, slot) >>> 0 === 0) {
+    throw new SyntaxError(`Dynamic JSON tree failed to materialize at byte ${runtime._result(4)}`);
   }
   return dynamicSlotToJS(runtime, state, slot, asciiSource);
 }
@@ -1093,12 +1023,7 @@ export class DynamicValueView {
   }
 
   toJS() {
-    return dynamicTreeToJS(
-      this.runtime,
-      this.state,
-      this.slot,
-      this.asciiSource,
-    );
+    return dynamicTreeToJS(this.runtime, this.state, this.slot, this.asciiSource);
   }
 
   stringify() {
@@ -1155,12 +1080,7 @@ export class DynamicArrayView extends DynamicValueView {
   }
 
   toArray() {
-    return dynamicTreeToJS(
-      this.runtime,
-      this.state,
-      this.slot,
-      this.asciiSource,
-    );
+    return dynamicTreeToJS(this.runtime, this.state, this.slot, this.asciiSource);
   }
 
   toJS() {
@@ -1233,12 +1153,7 @@ export class DynamicObjectView extends DynamicValueView {
   }
 
   toObject() {
-    return dynamicTreeToJS(
-      this.runtime,
-      this.state,
-      this.slot,
-      this.asciiSource,
-    );
+    return dynamicTreeToJS(this.runtime, this.state, this.slot, this.asciiSource);
   }
 
   toJS() {
@@ -1306,24 +1221,25 @@ export function writeGeneratedField(view, schema, field, value) {
   const presenceIndex = (root + bitmapByte) >>> 2;
   const nullIndex = (root + schema.nullOffset + bitmapByte) >>> 2;
   clearDeferredField(runtime, schema, root, field);
-  if (value === null && !field.nullable) throw new TypeError(`${field.name} is not nullable`);
+  if (value === null && !field.nullable && field.kind !== "null") throw new TypeError(`${field.name} is not nullable`);
   if (value !== undefined && value !== null) {
+    if (field.kind === "null") throw new TypeError(`${field.name} must be null`);
     if (field.kind === "number" && typeof value !== "number") throw new TypeError(`${field.name} must be a number`);
     if (field.kind === "boolean" && typeof value !== "boolean") throw new TypeError(`${field.name} must be a boolean`);
     if (field.kind === "string" && typeof value !== "string") throw new TypeError(`${field.name} must be a string`);
     if (field.kind === "array" && !Array.isArray(value) && !(value instanceof JsonArrayView)) throw new TypeError(`${field.name} must be an array`);
     if ((field.kind === "object" || field.kind === "union") && typeof value !== "object") throw new TypeError(`${field.name} must be an object`);
   }
-  if (field.kind === "number" || field.kind === "boolean") {
+  if (field.kind === "number" || field.kind === "boolean" || field.kind === "null") {
     invalidateSerialization(view);
     if (value === undefined) runtime.u32[presenceIndex] &= ~mask;
     else {
       runtime.u32[presenceIndex] |= mask;
-      if (value === null) runtime.u32[nullIndex] |= mask;
+      if (value === null && field.kind !== "null") runtime.u32[nullIndex] |= mask;
       else {
         runtime.u32[nullIndex] &= ~mask;
         if (field.kind === "number") runtime.f64[(root + field.offset) >>> 3] = value;
-        else runtime.u32[(root + field.offset) >>> 2] = value ? 1 : 0;
+        else if (field.kind === "boolean") runtime.u32[(root + field.offset) >>> 2] = value ? 1 : 0;
       }
     }
   } else {
@@ -1363,20 +1279,32 @@ export function createObjectView(schema, classPrototype = undefined) {
     if (field.hostManaged && classPrototype !== undefined) continue;
     const bitmapByte = fieldBitmapByte(field);
     const mask = fieldBitmapMask(field);
-    const cache = field.kind === "string" || field.kind === "object" || field.kind === "array" || field.kind === "union"
-      ? Symbol(field.name)
-      : undefined;
+    const cache = field.kind === "string" || field.kind === "object" || field.kind === "array" || field.kind === "union" ? Symbol(field.name) : undefined;
     let get;
-    if (field.kind === "number" || field.kind === "boolean") {
+    if (field.kind === "null") {
+      const read = function (view) {
+        const runtime = view[RAW_RUNTIME];
+        const root = view[RAW_ROOT];
+        if ((runtime.u32[(root + bitmapByte) >>> 2] & mask) === 0) return field.defaultValue;
+        return null;
+      };
+      get = hasComposites
+        ? function () {
+            activeDocument(this, "read");
+            return read(this);
+          }
+        : function () {
+            if (this[RAW_DOCUMENT] === 0) throw new ReferenceError("Cannot read a released JSON document");
+            return read(this);
+          };
+    } else if (field.kind === "number" || field.kind === "boolean") {
       const read = function (view) {
         const runtime = view[RAW_RUNTIME];
         const root = view[RAW_ROOT];
         if ((runtime.u32[(root + bitmapByte) >>> 2] & mask) === 0) return field.defaultValue;
         if ((runtime.u32[(root + schema.nullOffset + bitmapByte) >>> 2] & mask) !== 0) return null;
         if (field.decorators?.lazy) runtime._materializeField(schema, view[RAW_STATE], root, field);
-        return field.kind === "number"
-          ? runtime.f64[(root + field.offset) >>> 3]
-          : runtime.u32[(root + field.offset) >>> 2] !== 0;
+        return field.kind === "number" ? runtime.f64[(root + field.offset) >>> 3] : runtime.u32[(root + field.offset) >>> 2] !== 0;
       };
       get = hasComposites
         ? function () {

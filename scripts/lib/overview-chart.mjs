@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { ChartJSNodeCanvas } from "chartjs-node-canvas";
 import { INK, OVERVIEW_BARS } from "./palette.mjs";
 import { withAdaptiveLogScale } from "./chart-outliers.mjs";
+import { CHART_BOTTOM_PADDING, measuredChartLabels } from "./chart-layout.mjs";
 
 const WHITE_BACKGROUND = {
   id: "whiteBackground",
@@ -49,7 +50,7 @@ function createConfig(report, kind, title) {
   return {
     type: "bar",
     data: {
-      labels: report.payloads.map((payload) => payload.label),
+      labels: measuredChartLabels(report.payloads.map((payload) => payload.label)),
       datasets: series.map(([id, label], index) => ({
         label,
         data: report.payloads.map((payload) => resultByKey.get(`${payload.key}:${id}`)?.mbps ?? 0),
@@ -60,6 +61,7 @@ function createConfig(report, kind, title) {
     },
     options: {
       responsive: true,
+      layout: { padding: { bottom: CHART_BOTTOM_PADDING } },
       plugins: {
         title: { display: true, text: title, font: { size: 20, weight: "bold" } },
         legend: { position: "top", labels: { font: { size: 16, weight: "bold" }, padding: 20 } },

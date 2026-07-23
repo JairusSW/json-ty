@@ -58,8 +58,8 @@ same invariant owner.
 
 The maintained implementation lives under `assembly`, divided into
 `deserialize/`, `serialize/`, `util/`, and `layout/`. Naive and SWAR kernels
-retain json-as's relative file structure beneath their deserialize/serialize
-directories. Null, boolean, number, string,
+use matching tier directories beneath their deserialize/serialize roots.
+Null, boolean, number, string,
 array, struct, and dynamic JSON each have a dedicated module. The bounded UTF-8
 writer lives in `serialize/writer.ts`; the grammar/SIMD/SWAR scanner lives in
 `deserialize/scanner.ts`. Root-level `parser.ts`, `writer.ts`, and `dynamic.ts`
@@ -135,9 +135,16 @@ facade and removes the envelope from output. Root arrays retain a hidden owner
 for mutation/lifetime tracking and have a best-effort finalizer in addition to
 explicit disposal.
 
+Primitive roots use the same private envelope and generated field kernels.
+The host unwraps string, number, boolean, or null values immediately and
+releases the short-lived document view; serialization wraps the primitive,
+uses the bounded Wasm writer, and removes only the private envelope bytes.
+
 Dynamic values use a 16-byte tagged slot for null, boolean, number, string,
 array, or object. Dynamic object entries store key/value references. Lookup is
 linear for small objects and receives a cached host Map for wide objects.
+Dynamic parsing builds this graph eagerly by default; `{ eager: false }` is the
+explicit retained-span mode.
 
 ## Parsing
 
@@ -146,7 +153,7 @@ values structurally, accept arbitrary property order, apply presence/null
 tracking and defaults, and retain string spans. SIMD accelerates ASCII/string
 classification while scalar logic owns boundary and escape validation.
 The naive tier scans one byte/scalar at a time and is checked against all 318
-pinned JSONTestSuite parsing fixtures. SWAR uses json-as's 16→8→scalar probing,
+pinned JSONTestSuite parsing fixtures. SWAR uses 16→8→scalar probing,
 pair-multiply digit folds, and candidate-confirmation rules over UTF-8 bytes.
 SIMD retains 16-byte classification where it wins. Tier selection is compile
 time, and the differential/fuzz harness builds all three artifacts.
@@ -158,8 +165,8 @@ span and writes the document graph into a separate caller-owned bounded byte
 span. Its document-relative source offsets deliberately wrap modulo 2^32, so
 Wasm and host readers reach the external source without an intermediate copy.
 The validating form retains the complete RFC grammar checks. The trusted form
-is reserved for caller-validated canonical JSON/UTF-8 and uses json-as-shaped
-SWAR or 16-byte SIMD value-end scans for deferred composites. Releasing an
+is reserved for caller-validated canonical JSON/UTF-8 and uses SWAR or 16-byte
+SIMD value-end scans for deferred composites. Releasing an
 external document is a no-op; the caller owns both spans and their lifetimes.
 
 Flat and nested records first try a canonical
@@ -213,8 +220,8 @@ setters clear the bit and discard the range. Strings already have source-span
 slots and use the existing first-read host decode cache.
 
 The number lexer enforces JSON syntax. Common exact values use a Clinger path;
-four fractional UTF-8 digits are folded at once with the byte-lane version of
-json-as's pair-multiply SWAR kernel, and larger significands in the useful
+four fractional UTF-8 digits are folded at once with a byte-lane pair-multiply
+SWAR kernel, and larger significands in the useful
 exponent window use an Eisel–Lemire path. Structural skip/count scans validate
 number grammar without redundantly converting the number.
 Ambiguous long/wide decimals call the raw-pointer `parseNumberSlow` host import,
@@ -234,8 +241,8 @@ construction, and every scratch writer invalidate the resident input.
 ## Serialization
 
 The writer emits UTF-8 bytes into scratch. Exact i32/u32-valued TypeScript
-numbers use json-as's width ladder and digit-pair lookup ported directly to
-UTF-8. Other finite values use the xjb-as shortest binary64 formatter through a
+numbers use a width ladder and digit-pair lookup directly in UTF-8. Other
+finite values use the xjb-as shortest binary64 formatter through a
 tiny UTF-16 ASCII scratch buffer which is compacted to UTF-8; non-finite numbers
 serialize as `null`.
 
@@ -254,8 +261,8 @@ pretty, defaulted, host-managed, raw, codec, omit, omit-null, and omit-if inputs
 use the normal generated field writer.
 
 The binary64 writer formats into output headroom and narrows ASCII UTF-16 lanes
-with SIMD. Homogeneous number arrays reserve once and keep a local cursor,
-matching json-as's dedicated array-writer structure while emitting UTF-8.
+with SIMD. Homogeneous number arrays reserve once and keep a local cursor while
+emitting UTF-8.
 
 The first serialization of an unchanged parsed view writes directly from its
 document. Its canonical string is then cached on the view or shared document

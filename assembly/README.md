@@ -8,8 +8,9 @@ they do not contain independent implementations of JSON primitives.
 assembly/
 ├── deserialize/
 │   ├── naive/       scalar RFC oracle kernels
-│   ├── swar/        json-as-shaped byte-lane kernels and document adapters
-│   ├── scanner.ts   UTF-8, JSON grammar, SIMD/SWAR, number lexer
+│   ├── swar/        byte-lane kernels and document adapters
+│   ├── simd/        16-byte UTF-8 string and structural scanners
+│   ├── scanner.ts   UTF-8/JSON grammar and tier dispatch
 │   ├── digits.ts    packed UTF-8 digit folding
 │   ├── null.ts      null literal
 │   ├── boolean.ts   boolean literal and flat slot store
@@ -20,6 +21,7 @@ assembly/
 │   └── dynamic.ts   tagged JSON.Value graph parser
 ├── serialize/
 │   ├── swar/        bounded raw UTF-8 string writer
+│   ├── simd/        vectorized retained UTF-8 string writers
 │   ├── writer.ts    bounded raw UTF-8 writer and shortest f64 formatting
 │   ├── integer.ts   direct UTF-8 digit-pair integer writer
 │   ├── null.ts      null writer
@@ -34,10 +36,9 @@ assembly/
 │   ├── record.ts    presence/null bitmaps and 8-byte slots
 │   ├── array.ts     16-byte array header and element kind tags
 │   └── dynamic.ts   dynamic slot and entry tags/sizes
-├── util/             shared SWAR/SIMD masks, digit folds, and value-end scanning
+├── util/             shared byte-lane masks, digit folds, and tier dispatch
 ├── __tests__/        canonical microtests (excluded from npm package)
 ├── wasm/             earlier parser prototypes (excluded from npm package)
-├── experiments/      design kernels (excluded from npm package)
 ├── runtime.ts       scratch, result header, persistent allocator
 └── eisel-lemire.ts exact numeric conversion kernel
 ```
@@ -80,7 +81,7 @@ inlined inside generated schema functions.
 
 The codegen and Wasm contract tests enforce these rules.
 
-## Kernel tiers and provenance
+## Kernel tiers
 
 The artifact compiler injects `JSON_TY_KERNEL_TIER` as a compile-time integer:
 naive `0`, SWAR `1`, SIMD `2`. Generated schema source is identical across
@@ -89,9 +90,7 @@ default. `npm run test:rfc-oracle` checks all tiers against the pinned RFC
 corpus; `npm run bench:tiers` records correctness, compile time, size, raw,
 Overview, Classic, lazy, and parity measurements in one report.
 
-The SIMD tier includes the json-as-shaped 16-byte structural/value-end scanner,
-adapted from UTF-16 lanes to bounded UTF-8 bytes. Its randomized test compares
-all offsets and memory-boundary tails against the SWAR implementation.
-
-`JSON_AS_UPSTREAM.md`, the inventory, source manifest, and upstream license
-record the retired `assembly2` snapshot and canonical cutover.
+The SIMD tier includes dedicated 16-byte UTF-8 string, structural/value-end,
+and retained-string serialization kernels. Their tests cover unaligned starts,
+bounded tails, malformed UTF-8, escapes, and exact-capacity output against the
+SWAR implementations.

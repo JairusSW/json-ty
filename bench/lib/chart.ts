@@ -1,6 +1,6 @@
 // Grouped-bar SVG chart generator for json-ty benchmarks.
 //
-// Adapted from json-as's bench/lib/chart.ts to read a single results array
+// Reads a single results array
 // (as written by dump() in bench.js) instead of one file per library/payload.
 //
 //   bun ./bench/lib/chart.ts ./build/logs/serialize.json -o ./benchmark/results

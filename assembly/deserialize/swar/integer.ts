@@ -1,6 +1,6 @@
 // Checked SWAR integer scanners over bounded UTF-8 byte spans.
 //
-// The stride policy follows json-as:
+// Stride policy:
 //   exact digit runs: 16 -> 8 -> 4 -> scalar
 //   unsigned cursor scan: 8 -> scalar
 //   signed cursor scan: 4 -> scalar
@@ -39,7 +39,7 @@ function firstDigit(start: usize, end: usize): bool {
 }
 
 /**
- * Parse an exact caller-validated digit span with json-as's full stride tree.
+ * Parse an exact caller-validated digit span with the full stride tree.
  * Returns `U64.MAX_VALUE` on overflow.
  */
 export function parseUnsignedExact_SWAR(
@@ -167,7 +167,7 @@ export function deserializeInteger_SWAR(
   let value: u64 = 0;
   let digits: u32 = 0;
 
-  // Preserve json-as's smaller signed scan probe. The leading minus shifts the
+  // Preserve the smaller signed scan probe. The leading minus shifts the
   // digit run into the common terminator-in-load zone for an 8-byte probe.
   while (end - pointer >= 4) {
     const chunk = parse4Digits_SWAR(load<u32>(pointer));
@@ -191,4 +191,3 @@ export function deserializeInteger_SWAR(
   store<i64>(destination, negative ? 0 - <i64>value : <i64>value);
   return pointer;
 }
-

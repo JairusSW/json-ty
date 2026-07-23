@@ -73,6 +73,7 @@ const schemas = createSchemaRegistry(layouts);
 const runtime = new RawNodeBinding(wasm, { scratchCapacity, heapReserve });
 const plainOptions = Object.freeze({ plain: true });
 const eagerOptions = Object.freeze({ eager: true, validate: true });
+const retainedOptions = Object.freeze({ eager: false, validate: true });
 let sink = 0;
 
 function consume(value) {
@@ -199,6 +200,15 @@ function parseDynamicEager(input) {
   }
 }
 
+function parseDynamicRetained(input, project = null) {
+  const value = runtime.parseDynamic(input, retainedOptions);
+  try {
+    return project ? project(value) : value.type.length;
+  } finally {
+    value.dispose();
+  }
+}
+
 function stringifyTypedUncached(schema, value) {
   const output = runtime._serializeDocument(schema, value.__document, runtime.scratch);
   return schema.root === undefined ? output : output.slice(9, -1);
@@ -274,12 +284,12 @@ for (const corpus of selected) {
         results.push(measure(corpus, fixture.format, "deserialize", "eager", graphBackend ? "json-ty (validating eager graph)" : "json-ty (native plain backend)", fixture.bytes, operation));
       }
       if (selectedVariants.has("lazy")) {
-        const operation = lazySchema ? () => parseTyped(lazySchema, residentInput) : () => parseDynamic(residentInput);
+        const operation = lazySchema ? () => parseTyped(lazySchema, residentInput) : () => parseDynamicRetained(residentInput);
         results.push(measure(corpus, fixture.format, "deserialize", "lazy", lazySchema ? "json-ty (typed view)" : "json-ty (dynamic view)", fixture.bytes, operation));
         if (projection) {
           const projected = lazySchema
             ? () => parseTyped(lazySchema, residentInput, projection)
-            : () => parseDynamic(residentInput, projection);
+            : () => parseDynamicRetained(residentInput, projection);
           results.push(measure(corpus, fixture.format, "deserialize", "lazy", lazySchema ? "json-ty (typed view + projection)" : "json-ty (dynamic view + projection)", fixture.bytes, projected, "projection"));
         }
       }
@@ -299,7 +309,7 @@ for (const corpus of selected) {
       if (corpus.key === "twitter" && fixture.format === "min") {
         for (const [query, queryProjection] of Object.entries(twitterQueries)) {
           if (selectedVariants.has("lazy")) {
-            results.push(measure(corpus, fixture.format, "deserialize", "lazy", `json-ty (${query})`, fixture.bytes, () => parseDynamic(residentInput, queryProjection), query));
+            results.push(measure(corpus, fixture.format, "deserialize", "lazy", `json-ty (${query})`, fixture.bytes, () => parseDynamicRetained(residentInput, queryProjection), query));
           }
           if (selectedVariants.has("obj")) {
             results.push(measure(corpus, fixture.format, "deserialize", "obj", `JSON.Obj (${query})`, fixture.bytes, () => parseDynamic(residentInput, queryProjection), query));

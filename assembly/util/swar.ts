@@ -1,4 +1,4 @@
-// UTF-8 byte-lane adaptation of json-as's SWAR primitives.
+// UTF-8 byte-lane SWAR primitives.
 //
 // Packed words use Wasm's little-endian memory order: byte zero is the
 // least-significant byte. Candidate masks put each hit in that byte's high bit.
@@ -9,7 +9,7 @@ const BYTE_HIGH: u64 = 0x8080_8080_8080_8080;
 /**
  * Load up to eight bytes without reading at or beyond `end`.
  *
- * A full word keeps json-as's single-load fast path. The scalar tail is
+ * A full word keeps the single-load fast path. The scalar tail is
  * zero-padded in the high lanes, so callers must bound candidate masks by the
  * original byte count.
  */
@@ -30,8 +30,8 @@ export function loadU64Bounded(start: usize, end: usize): u64 {
 /**
  * Return high-bit candidates for bytes equal to `value`.
  *
- * This is json-as's subtract-and-mask equality primitive narrowed from UTF-16
- * lanes to bytes. Borrow propagation can mark a lane after a true hit, so each
+ * This subtract-and-mask equality primitive operates on byte lanes. Borrow
+ * propagation can mark a lane after a true hit, so each
  * candidate is confirmed scalarly before semantic use.
  */
 @inline
@@ -52,7 +52,7 @@ export function nonDigitMask8(word: u64): u64 {
  * Decode four ASCII hex bytes packed as `0x44332211` memory order.
  *
  * The input must already be validated as `0-9`, `A-F`, or `a-f`.
- * Operation order matches json-as's nibble-plus-alpha-adjust transform.
+ * Uses a nibble-plus-alpha-adjust transform.
  */
 @inline
 export function hex4_to_u16_swar(block: u32): u16 {
@@ -81,4 +81,3 @@ export function u16_to_hex4_swar(code: u16): u32 {
     ((block + 0x0606_0606) >> 4) & 0x0101_0101;
   return block + 0x3030_3030 + alpha * 39;
 }
-

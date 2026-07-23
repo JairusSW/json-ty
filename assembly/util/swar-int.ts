@@ -1,4 +1,4 @@
-// UTF-8 adaptation of json-as's pair-multiply digit fold.
+// UTF-8 pair-multiply digit fold.
 //
 // Eight byte lanes now fit in one u64. Validation remains ahead of every
 // multiply; trusted consume-to-end callers may use the Unsafe variants.
@@ -77,4 +77,3 @@ export function parse16Digits_SWAR_Unsafe(start: usize): u64 {
   return <u64>fold8(load<u64>(start)) * 100_000_000 +
     <u64>fold8(load<u64>(start, 8));
 }
-

@@ -5,11 +5,11 @@ const program = createProgramFromConfig("compiler/fixtures/tsconfig.json");
 const first = analyzeProgram(program).manifest;
 const second = analyzeProgram(program).manifest;
 
-assert.equal(first.version, 5);
+assert.equal(first.version, 6);
 assert.equal(first.hash, second.hash);
 assert.deepEqual(
   first.schemas.map((schema) => schema.name),
-  ["Box__number", "Cat", "CompositeDefaults", "Config", "Dog", "LazyAll", "LazyAuto", "LazyConvenience", "LazyConvenienceAll", "LazyConvenienceNone", "LazyNone", "numberArray", "numberJsonArray", "Player", "PlayerArray", "Position"],
+  ["booleanValue", "Box__number", "Cat", "CompositeDefaults", "Config", "Dog", "LazyAll", "LazyAuto", "LazyConvenience", "LazyConvenienceAll", "LazyConvenienceNone", "LazyNone", "nullValue", "numberArray", "numberJsonArray", "numberValue", "Player", "PlayerArray", "Position", "stringValue"],
 );
 const playerArray = first.schemas.find((schema) => schema.name === "PlayerArray");
 assert.equal(playerArray.root, "array");
@@ -17,6 +17,11 @@ assert.equal(playerArray.fields[0].type.element.typeName, "Player");
 const numberFacade = first.schemas.find((schema) => schema.name === "numberJsonArray");
 assert.equal(numberFacade.root, "json-array");
 assert.equal(numberFacade.fields[0].type.facade, "json-array");
+for (const [name, kind] of [["stringValue", "string"], ["numberValue", "number"], ["booleanValue", "boolean"], ["nullValue", "null"]]) {
+  const root = first.schemas.find((schema) => schema.name === name);
+  assert.equal(root.root, "value");
+  assert.equal(root.fields[0].type.kind, kind);
+}
 
 const player = first.schemas.find((schema) => schema.name === "Player");
 assert.ok(player);

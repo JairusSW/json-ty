@@ -12,7 +12,7 @@ function isSpace(value: u8): bool {
   return value == 0x20 || value == 0x09 || value == 0x0a || value == 0x0d;
 }
 
-// Direct UTF-8 byte-lane adaptation of json-as's SWAR value-end scanner.
+// UTF-8 byte-lane SWAR value-end scanner.
 // Masks remain filters: every candidate lane is confirmed with a real byte
 // load before it can affect quote state or nesting depth.
 
@@ -52,7 +52,7 @@ function scanQuotedValueEnd_SWAR(start: usize, end: usize): usize {
   let pointer = start + 1;
   const end8 = end >= 8 ? end - 8 : 0;
 
-  // Keep json-as's full-word skip and scalar-confirmation ordering. On the
+  // Keep full-word skip and scalar-confirmation ordering. On the
   // first real backslash, restart at the word boundary and let the scalar tail
   // consume escape pairs exactly.
   while (pointer <= end8) {
@@ -154,7 +154,7 @@ function scanScalarValueEnd_SWAR(start: usize, end: usize): usize {
  * Return the byte pointer immediately after one JSON value, or zero for empty
  * input and unterminated quoted/composite values.
  *
- * This scanner locates a boundary; like json-as's original, it does not
+ * This scanner locates a boundary; it does not
  * validate the complete scalar grammar. Every u64 load is guarded by
  * `pointer + 8 <= end`.
  */
@@ -167,4 +167,3 @@ export function scanValueEnd_SWAR(start: usize, end: usize): usize {
   }
   return scanScalarValueEnd_SWAR(start, end);
 }
-

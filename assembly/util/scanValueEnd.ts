@@ -1,5 +1,5 @@
 import { scanValueEnd_SWAR } from "./scanValueEndSwar";
-import { scanValueEnd_SIMD } from "./scanValueEndSimd";
+import { scanValueEnd_SIMD } from "../deserialize/simd/document";
 
 /** Boundary scan for caller-validated canonical UTF-8 JSON. */
 @inline

@@ -15,7 +15,6 @@
     "src/index.ts",
     "assembly/",
     "!assembly/__tests__/",
-    "!assembly/experiments/",
     "!assembly/wasm/",
     "src/raw/index.js",
     "src/raw/index.d.ts",
@@ -39,10 +38,8 @@
     "benchmark/charts/json-as-parity-serialize.svg",
     "benchmark/charts/classic-v8-deserialize.svg",
     "benchmark/charts/classic-v8-serialize.svg",
-    "benchmark/results/core-port-2026-07-18.md",
     "ARCHITECTURE.md",
-    "FEATURE_MATRIX.md",
-    "PLAN.md"
+    "FEATURE_MATRIX.md"
   ],
   "engines": {
     "node": ">=22.15"
@@ -167,7 +164,8 @@
     "bench:swar-port:scanner": "npm run build:swar-port:scanner && node ./assembly/__tests__/structural-scanner.bench.mjs",
     "test:swar-port": "npm run test:swar-port:primitives && npm run test:swar-port:scanner && npm run test:swar-port:string && npm run test:swar-port:integer && npm run test:swar-port:float && npm run test:swar-port:arrays && npm run test:swar-port:document && npm run test:swar-port:serialize-string",
     "build:swar-port:string": "asc assembly/__tests__/swar-string.ts --runtime stub --exportRuntime --optimizeLevel 3 --shrinkLevel 0 -o build/swar-port/string.wasm",
-    "test:swar-port:string": "npm run build:swar-port:string && node ./assembly/__tests__/swar-string.test.mjs",
+    "test:swar-port:string": "npm run build:swar-port:string && node ./assembly/__tests__/swar-string.test.mjs && npm run test:swar-port:string:simd",
+    "test:swar-port:string:simd": "asc assembly/__tests__/simd-string.ts --runtime stub --exportRuntime --enable simd --optimizeLevel 3 --shrinkLevel 0 -o build/swar-port/simd-string.wasm && node ./assembly/__tests__/simd-string.test.mjs",
     "bench:swar-port:string": "npm run build:swar-port:string && node ./assembly/__tests__/swar-string.bench.mjs",
     "build:swar-port:integer": "asc assembly/__tests__/swar-integer.ts --runtime stub --exportRuntime --optimizeLevel 3 --shrinkLevel 0 -o build/swar-port/integer.wasm",
     "test:swar-port:integer": "npm run build:swar-port:integer && node ./assembly/__tests__/swar-integer.test.mjs",
@@ -182,7 +180,8 @@
     "test:swar-port:document": "npm run build:swar-port:document && node ./assembly/__tests__/swar-document.test.mjs",
     "bench:swar-port:document": "npm run build:swar-port:document && node ./assembly/__tests__/swar-document.bench.mjs",
     "build:swar-port:serialize-string": "asc assembly/__tests__/swar-serialize-string.ts --runtime stub --exportRuntime --optimizeLevel 3 --shrinkLevel 0 -o build/swar-port/serialize-string.wasm",
-    "test:swar-port:serialize-string": "npm run build:swar-port:serialize-string && node ./assembly/__tests__/swar-serialize-string.test.mjs",
+    "test:swar-port:serialize-string": "npm run build:swar-port:serialize-string && node ./assembly/__tests__/swar-serialize-string.test.mjs && npm run test:swar-port:serialize-string:simd",
+    "test:swar-port:serialize-string:simd": "asc assembly/__tests__/simd-serialize-string.ts --runtime stub --exportRuntime --enable simd --optimizeLevel 3 --shrinkLevel 0 -o build/swar-port/simd-serialize-string.wasm && node ./assembly/__tests__/simd-serialize-string.test.mjs",
     "bench:swar-port:serialize-string": "npm run build:swar-port:serialize-string && node ./assembly/__tests__/swar-serialize-string.bench.mjs",
     "test:fuzz:raw": "npm run build:raw && node ./src/raw/fuzz.test.mjs",
     "test:fuzz:raw:tiers": "npm run test:fuzz:raw:naive && npm run test:fuzz:raw:swar && npm run test:fuzz:raw:simd",

@@ -16,7 +16,7 @@ export const BASE = {
   pacificBlue: "#2B9EB3",
 };
 
-// Keep the json-as overview order: baseline, fallback, scalar/plain, fastest,
+// Keep a stable overview order: baseline, fallback, scalar/plain, fastest,
 // then the opt-in dynamic object representation.
 export const OVERVIEW_BARS = [
   { bg: rgba("strawberryRed", 0.85), border: BASE.strawberryRed },

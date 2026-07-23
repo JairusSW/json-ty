@@ -37,4 +37,3 @@ export function elementStride(type: TypeRef): number {
 export function isCompositeType(type: TypeRef): boolean {
   return type.kind === "object" || type.kind === "array" || type.kind === "union";
 }
-

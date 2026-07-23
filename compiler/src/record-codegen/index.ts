@@ -677,7 +677,7 @@ export {
   resultStatus,
   setHeapLimit,
 } from "${runtimeImportBase}/runtime";
-export { materializeDynamic, materializeDynamicTree, parseDynamic, parseDynamicEager, parseDynamicEagerTrusted, parseDynamicTrusted } from "${runtimeImportBase}/deserialize/dynamic";
+export { materializeDynamic, materializeDynamicTree, parseDynamic, parseDynamicEager, parseDynamicEagerTrusted, parseDynamicRetained, parseDynamicRetainedTrusted, parseDynamicTrusted } from "${runtimeImportBase}/deserialize/dynamic";
 export { serializeDynamic } from "${runtimeImportBase}/serialize/dynamic";
 `;
   const abiExports = layouts

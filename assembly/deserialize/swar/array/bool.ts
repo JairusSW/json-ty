@@ -7,7 +7,7 @@ export function countBooleanArrayElements_SWAR(start: usize, end: usize): u64 {
 
 /**
  * Direct-write boolean array parser. Packed `true`/`fals` comparisons retain
- * json-as's literal path while byte addressing halves the source stride.
+ * the literal path while byte addressing halves the source stride.
  */
 export function deserializeBooleanArray_SWAR(
   start: usize,
@@ -54,4 +54,3 @@ export function deserializeBooleanArray_SWAR(
   }
   return 0;
 }
-

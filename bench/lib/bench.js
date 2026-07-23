@@ -1,7 +1,7 @@
 // V8 (d8) micro-benchmark harness for json-ty.
 //
-// Yoinked from json-as and adapted to record a (library, payload) tuple per
-// run so a single results file can drive a grouped bar chart (native vs
+// Records a (library, payload) tuple per run so a single results file can
+// drive a grouped bar chart (native vs
 // json-ty vs fast-json-stringify). Run under d8/v8 with --allow-natives-syntax
 // so blackbox() can defeat dead-code elimination.
 

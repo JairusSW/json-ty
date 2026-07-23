@@ -54,7 +54,6 @@ access, mutation, class methods, and `instanceof`.
 - [Debugging](#debugging)
 - [Architecture](#architecture)
 - [Contributing](#contributing)
-- [Acknowledgements](#acknowledgements)
 - [License](#license)
 - [Contact](#contact)
 
@@ -375,6 +374,20 @@ samples.dispose();
 Nested arrays and statically known heterogeneous tuples are generated as typed
 flat layouts.
 
+### Primitive Roots
+
+Primitive roots use the same typed call syntax as records and arrays:
+
+```ts
+const text = JSON.stringify<string>("");
+const count = JSON.parse<number>("42");
+const enabled = JSON.parse<boolean>("true");
+const nothing = JSON.stringify<null>(null);
+```
+
+Strings, numbers, booleans, `null`, arrays, tuples, and schema-backed objects
+are all valid top-level typed values.
+
 ### Dynamic JSON
 
 Unknown-shape data is opt-in through `JSON.Value`, `JSON.Obj`, and `JSON.Arr`:
@@ -559,10 +572,11 @@ objects, fully materialized lazy documents, and dynamic JSON can favor native
 V8. `parseDynamic(input, { plain: true })` deliberately uses the host JSON
 backend because copying a completed Wasm graph into ordinary host objects adds
 an unavoidable second allocation pass. Byte inputs still receive fatal UTF-8
-validation. `parseDynamic(bytes, { eager: true, validate: true })` instead
-constructs the complete queryable flat-memory graph in one Wasm pass; the
-default dynamic path retains validated nested spans until access. Validation
-is mandatory and enabled by default—`validate: false` and trusted-byte bypasses
+validation. Dynamic parsing constructs the complete queryable flat-memory graph
+in one Wasm pass by default. Use
+`parseDynamic(bytes, { eager: false, validate: true })` only when explicitly
+choosing retained nested spans and on-demand materialization. Validation is
+mandatory and enabled by default—`validate: false` and trusted-byte bypasses
 are unsupported. Typed views, lazy views, `JSON.Obj`, and raw-byte output remain
 Wasm-backed; generated JavaScript handles ordinary-object serialization when
 flattening it into Wasm would lose.
@@ -597,8 +611,7 @@ Additional published charts cover the complete classic corpus, lazy access
 patterns, raw API paths, tier execution, compile time, Wasm size, and RFC
 coverage under [`benchmark/charts`](./benchmark/charts).
 
-Results and methodology live in [bench/README.md](./bench/README.md) and
-[benchmark/results/core-port-2026-07-18.md](./benchmark/results/core-port-2026-07-18.md).
+Results and methodology live in [bench/README.md](./bench/README.md).
 
 ## Compatibility
 
@@ -685,9 +698,7 @@ memory and the rare correctly-rounded long-number fallback. There is no
 `@assemblyscript/loader`, managed schema object, or GC graph.
 
 Read [ARCHITECTURE.md](./ARCHITECTURE.md) for the memory layout, parser tiers,
-canonical-source protocol, lazy materialization, host lowering, and ABI. The
-implementation roadmap and fixed decisions are preserved in
-[PLAN.md](./PLAN.md).
+canonical-source protocol, lazy materialization, host lowering, and ABI.
 
 ## Verification
 
@@ -713,17 +724,6 @@ Please read [CONTRIBUTING.md](./CONTRIBUTING.md) and
 before/after numbers and must keep the naive/SWAR/SIMD differential suites green.
 
 Contributors are recognized in [CONTRIBUTORS.md](./CONTRIBUTORS.md).
-
-## Acknowledgements
-
-`json-ty` is a sibling of [json-as](https://github.com/JairusSW/json-as). It
-adapts json-as's schema-specialization, SIMD/SWAR scanning, default, numeric,
-string, and serializer ideas to a raw UTF-8 ABI and a flat host-readable memory
-model. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) and the
-[pinned source inventory](./assembly/JSON_AS_UPSTREAM.md) for provenance.
-
-It is built with [AssemblyScript](https://www.assemblyscript.org/) and uses
-[xjb-as](https://www.npmjs.com/package/xjb-as) for the shortest binary64 writer.
 
 ## License
 

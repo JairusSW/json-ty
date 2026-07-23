@@ -1,6 +1,6 @@
 // Checked UTF-8 SWAR float parser.
 //
-// This retains json-as's scalar short integer prefix, four-digit fractional
+// Uses a scalar short integer prefix and four-digit fractional
 // fold, exact u64 mantissa, Clinger fast range, Eisel-Lemire conversion, and
 // wide scientific fallback. Inputs with more than 19 significant digits use
 // json-ty's host byte-span fallback for bit-identical rounding.
@@ -60,7 +60,7 @@ function deserializeFloat(
     mantissa = <u64>(value - 0x30);
     mantissaDigits = 1;
     pointer++;
-    // json-as keeps typical 1-3 digit integer prefixes scalar. Long prefixes
+    // Keep typical 1-3 digit integer prefixes scalar. Long prefixes
     // remain scalar too because a delimiter usually defeats a packed probe.
     while (pointer < end && isDigit(load<u8>(pointer))) {
       const digit = <u64>(load<u8>(pointer) - 0x30);

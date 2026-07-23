@@ -2,6 +2,7 @@ import type { TypeRef } from "../../schema-ir.js";
 import { arrayEmitter } from "./array.js";
 import { booleanEmitter } from "./boolean.js";
 import { numberEmitter } from "./number.js";
+import { nullEmitter } from "./null.js";
 import { objectEmitter } from "./object.js";
 import { stringEmitter } from "./string.js";
 import type {
@@ -15,6 +16,7 @@ const emitters: Record<TypeRef["kind"], AssemblyTypeEmitter> = {
   number: numberEmitter as AssemblyTypeEmitter,
   boolean: booleanEmitter as AssemblyTypeEmitter,
   string: stringEmitter as AssemblyTypeEmitter,
+  null: nullEmitter as AssemblyTypeEmitter,
   object: objectEmitter as AssemblyTypeEmitter,
   array: arrayEmitter as AssemblyTypeEmitter,
   union: unionEmitter as AssemblyTypeEmitter,
@@ -44,4 +46,3 @@ export type {
   AssemblyTypeEmitter,
   ParseFailureKind,
 } from "./types.js";
-

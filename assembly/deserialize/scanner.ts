@@ -4,6 +4,7 @@ import { eiselLemire22 } from "../eisel-lemire";
 import { parse4Digits } from "./digits";
 import { scanString_SWAR } from "./swar/string";
 import { scanString_NAIVE } from "./naive/string";
+import { scanString_SIMD } from "./simd/string";
 import { scanValueEndTrusted } from "../util/scanValueEnd";
 
 
@@ -39,13 +40,13 @@ export function endDynamicGraphEstimate(): u32 {
   return <u32>dynamicGraphEstimate;
 }
 
+
 @inline
 function addDynamicGraphBytes(bytes: usize): void {
   if (!dynamicGraphEstimateEnabled) return;
   const next = dynamicGraphEstimate + bytes;
   dynamicGraphEstimate = next < dynamicGraphEstimate ? <usize>0xffffffff : next;
 }
-
 
 // JavaScript string ingress is encoded by the host and is therefore already
 // shortest-form UTF-8. Raw Buffer/Uint8Array ingress keeps the strict validator.
@@ -83,29 +84,16 @@ export function skipWhitespace(pointer: usize, end: usize): usize {
 
 
 @inline
-function isHex(value: u8): bool {
-  return (value >= 0x30 && value <= 0x39) || (value >= 0x41 && value <= 0x46) || (value >= 0x61 && value <= 0x66);
-}
-
-
-@inline
-function validShortEscape(value: u8): bool {
-  return value == QUOTE || value == BACKSLASH || value == 0x2f || value == 0x62 || value == 0x66 || value == 0x6e || value == 0x72 || value == 0x74;
-}
-
-@inline
 function hexNibble(value: u8): u32 {
   if (value >= 0x30 && value <= 0x39) return value - 0x30;
   if (value >= 0x41 && value <= 0x46) return value - 0x37;
   return value - 0x57;
 }
 
+
 @inline
 function decodeHex4(pointer: usize): u32 {
-  return (hexNibble(load<u8>(pointer)) << 12) |
-    (hexNibble(load<u8>(pointer + 1)) << 8) |
-    (hexNibble(load<u8>(pointer + 2)) << 4) |
-    hexNibble(load<u8>(pointer + 3));
+  return (hexNibble(load<u8>(pointer)) << 12) | (hexNibble(load<u8>(pointer + 1)) << 8) | (hexNibble(load<u8>(pointer + 2)) << 4) | hexNibble(load<u8>(pointer + 3));
 }
 
 // Cold exact matcher for escaped object keys. Generated code first compares
@@ -155,171 +143,6 @@ export function matchJsonKey(pointer: usize, end: usize, expected: usize, expect
 
 
 @inline
-function isContinuation(value: u8): bool {
-  return (value & 0xc0) == 0x80;
-}
-
-// Validates one shortest-form Unicode scalar encoded as UTF-8 and returns the
-// next pointer. Surrogates, overlong forms, and values above U+10FFFF fail.
-function skipUtf8Scalar(pointer: usize, end: usize): usize {
-  const first = load<u8>(pointer);
-  if (first < 0x80) return pointer + 1;
-  if (first >= 0xc2 && first <= 0xdf) {
-    if (pointer + 2 > end || !isContinuation(load<u8>(pointer + 1))) return 0;
-    return pointer + 2;
-  }
-  if (first >= 0xe0 && first <= 0xef) {
-    if (pointer + 3 > end) return 0;
-    const second = load<u8>(pointer + 1);
-    const third = load<u8>(pointer + 2);
-    if (!isContinuation(third)) return 0;
-    if (first == 0xe0 ? second < 0xa0 || second > 0xbf : first == 0xed ? second < 0x80 || second > 0x9f : !isContinuation(second)) return 0;
-    return pointer + 3;
-  }
-  if (first >= 0xf0 && first <= 0xf4) {
-    if (pointer + 4 > end) return 0;
-    const second = load<u8>(pointer + 1);
-    if (first == 0xf0 ? second < 0x90 || second > 0xbf : first == 0xf4 ? second < 0x80 || second > 0x8f : !isContinuation(second)) return 0;
-    if (!isContinuation(load<u8>(pointer + 2)) || !isContinuation(load<u8>(pointer + 3))) return 0;
-    return pointer + 4;
-  }
-  return 0;
-}
-
-
-@inline
-function hasZeroByte(word: u64): u64 {
-  return (word - 0x0101010101010101) & ~word & 0x8080808080808080;
-}
-
-
-@inline
-function swarStringSpecial(word: u64): bool {
-  return hasZeroByte(word ^ 0x2222222222222222) != 0 || hasZeroByte(word ^ 0x5c5c5c5c5c5c5c5c) != 0 || hasZeroByte(word & 0xe0e0e0e0e0e0e0e0) != 0 || (word & 0x8080808080808080) != 0;
-}
-
-// Trusted host-string scanner. It retains JSON quote, escape, and raw-control
-// validation but does not revalidate UTF-8 continuation bytes scalar-by-scalar.
-// This is the raw UTF-8 analogue of json-as's trusted generated string field.
-function scanStringContentTrusted(pointer: usize, end: usize): usize {
-  stringEscaped = false;
-  while (pointer < end) {
-    if (ASC_FEATURE_SIMD) {
-      while (pointer + 16 <= end) {
-        const block = v128.load(pointer);
-        const quote = i8x16.eq(block, i8x16.splat(QUOTE));
-        const slash = i8x16.eq(block, i8x16.splat(BACKSLASH));
-        const controls = i8x16.lt_u(block, i8x16.splat(0x20));
-        const mask = i8x16.bitmask(v128.or(v128.or(quote, slash), controls));
-        if (mask != 0) {
-          pointer += <usize>ctz(mask);
-          break;
-        }
-        pointer += 16;
-      }
-    }
-    while (pointer + 8 <= end) {
-      const word = load<u64>(pointer);
-      const mask = hasZeroByte(word ^ 0x2222222222222222) | hasZeroByte(word ^ 0x5c5c5c5c5c5c5c5c) | hasZeroByte(word & 0xe0e0e0e0e0e0e0e0);
-      if (mask != 0) {
-        pointer += <usize>(ctz(mask) >> 3);
-        break;
-      }
-      pointer += 8;
-    }
-
-    while (pointer < end) {
-      const value = load<u8>(pointer);
-      if (value == QUOTE) return pointer;
-      if (value < 0x20) return 0;
-      if (value != BACKSLASH) {
-        pointer++;
-        continue;
-      }
-
-      stringEscaped = true;
-      pointer++;
-      if (pointer >= end) return 0;
-      const escape = load<u8>(pointer);
-      if (escape == 0x75) {
-        if (pointer + 4 >= end) return 0;
-        if (!isHex(load<u8>(pointer + 1)) || !isHex(load<u8>(pointer + 2)) || !isHex(load<u8>(pointer + 3)) || !isHex(load<u8>(pointer + 4))) return 0;
-        pointer += 5;
-      } else {
-        if (!validShortEscape(escape)) return 0;
-        pointer++;
-      }
-      break;
-    }
-  }
-  return 0;
-}
-
-
-// Returns the pointer to the terminating quote, or zero on failure.
-function scanStringContentStrict(pointer: usize, end: usize): usize {
-  stringEscaped = false;
-  while (pointer < end) {
-    if (ASC_FEATURE_SIMD) {
-      while (pointer + 16 <= end) {
-        const block = v128.load(pointer);
-        const quote = i8x16.eq(block, i8x16.splat(QUOTE));
-        const slash = i8x16.eq(block, i8x16.splat(BACKSLASH));
-        const controls = i8x16.lt_u(block, i8x16.splat(0x20));
-        const nonAscii = i8x16.lt_s(block, i8x16.splat(0));
-        const mask = i8x16.bitmask(v128.or(v128.or(v128.or(quote, slash), controls), nonAscii));
-        if (mask != 0) {
-          pointer += <usize>ctz(mask);
-          break;
-        }
-        pointer += 16;
-      }
-    }
-    // Scalar-compatible Wasm and SIMD tails share an 8-byte SWAR classifier,
-    // then the same bounded scalar validator for candidates and tails.
-    while (pointer + 8 <= end) {
-      const word = load<u64>(pointer);
-      const mask = hasZeroByte(word ^ 0x2222222222222222) | hasZeroByte(word ^ 0x5c5c5c5c5c5c5c5c) | hasZeroByte(word & 0xe0e0e0e0e0e0e0e0) | (word & 0x8080808080808080);
-      if (mask != 0) {
-        pointer += <usize>(ctz(mask) >> 3);
-        break;
-      }
-      pointer += 8;
-    }
-
-    while (pointer < end) {
-      const value = load<u8>(pointer);
-      if (value == QUOTE) return pointer;
-      if (value < 0x20) return 0;
-      if (value != BACKSLASH) {
-        if (value < 0x80) pointer++;
-        else {
-          pointer = skipUtf8Scalar(pointer, end);
-          if (pointer == 0) return 0;
-        }
-        continue;
-      }
-
-      stringEscaped = true;
-      pointer++;
-      if (pointer >= end) return 0;
-      const escape = load<u8>(pointer);
-      if (escape == 0x75) {
-        if (pointer + 4 >= end) return 0;
-        if (!isHex(load<u8>(pointer + 1)) || !isHex(load<u8>(pointer + 2)) || !isHex(load<u8>(pointer + 3)) || !isHex(load<u8>(pointer + 4))) return 0;
-        pointer += 5;
-      } else {
-        if (!validShortEscape(escape)) return 0;
-        pointer++;
-      }
-      break;
-    }
-  }
-  return 0;
-}
-
-
-@inline
 export function scanStringContent(pointer: usize, end: usize): usize {
   if (JSON_TY_KERNEL_TIER == 0) {
     const naive = scanString_NAIVE(pointer - 1, end, stringInputTrusted);
@@ -327,15 +150,14 @@ export function scanStringContent(pointer: usize, end: usize): usize {
     stringEscaped = (naive & 1) != 0;
     return <usize>(naive >> 32) - 1;
   }
-  // Keep the existing SIMD kernel as the explicit upper tier. The port below
-  // is the scalar-Wasm/SWAR implementation and is selected at compile time.
-  if (ASC_FEATURE_SIMD) {
-    return stringInputTrusted
-      ? scanStringContentTrusted(pointer, end)
-      : scanStringContentStrict(pointer, end);
+  if (JSON_TY_KERNEL_TIER == 2 && ASC_FEATURE_SIMD) {
+    const simd = scanString_SIMD(pointer - 1, end, stringInputTrusted);
+    if (simd == 0) return 0;
+    stringEscaped = (simd & 1) != 0;
+    return <usize>(simd >> 32) - 1;
   }
-  // The stable scanner surface delegates to the mechanically adapted json-as
-  // kernel. It accepts the opening quote, scans raw UTF-8 bytes, and returns a
+  // The stable scanner surface delegates to the SWAR kernel. It accepts the
+  // opening quote, scans raw UTF-8 bytes, and returns a
   // retained-span result; json-ty keeps its existing quote-pointer ABI here.
   const result = scanString_SWAR(pointer - 1, end, stringInputTrusted);
   if (result == 0) return 0;
@@ -437,7 +259,7 @@ export function parseNumber(pointer: usize, end: usize, destination: usize): usi
     mantissaDigits = 1;
     pointer++;
     while (pointer < end && isDigit(load<u8>(pointer))) {
-      // Keep the integer prefix scalar. As in json-as, typical JSON integer
+      // Keep the integer prefix scalar. Typical JSON integer
       // parts are only one to three digits; probing a packed stride at their
       // delimiter costs more than it saves. Packed folding starts in long
       // fractional runs below, where four successful lanes are common.

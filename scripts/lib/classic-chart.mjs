@@ -4,6 +4,7 @@ import { ChartJSNodeCanvas } from "chartjs-node-canvas";
 import { INK, OVERVIEW_BARS } from "./palette.mjs";
 import { withAdaptiveLogScale } from "./chart-outliers.mjs";
 import { assertCompleteClassicReport } from "./classic-report.mjs";
+import { CHART_BOTTOM_PADDING, measuredChartLabels } from "./chart-layout.mjs";
 
 const WHITE_BACKGROUND = {
   id: "whiteBackground",
@@ -55,7 +56,7 @@ function createConfig(report, kind) {
   return {
     type: "bar",
     data: {
-      labels: payloads.map(({ label, bytes }) => `${label}\n(${sizeLabel(bytes)})`),
+      labels: measuredChartLabels(payloads.map(({ label, bytes }) => `${label}\n(${sizeLabel(bytes)})`)),
       datasets: series.map(([id, label], index) => ({
         label,
         data: payloads.map(({ key }) => byKey.get(`${key}:${id}`)?.mbps ?? 0),
@@ -66,6 +67,7 @@ function createConfig(report, kind) {
     },
     options: {
       responsive: true,
+      layout: { padding: { bottom: CHART_BOTTOM_PADDING } },
       plugins: {
         title: { display: true, text: `${kind === "serialize" ? "Serialization" : "Deserialization"} throughput of classic payloads`, font: { size: 20, weight: "bold" } },
         legend: { position: "top", labels: { font: { size: 15, weight: "bold" }, padding: 18 } },
@@ -144,9 +146,10 @@ export function generateClassicV8Charts() {
   const step = niceStep(maximum);
   const config = {
     type: "bar",
-    data: { labels, datasets },
+    data: { labels: measuredChartLabels(labels), datasets },
     options: {
       responsive: true,
+      layout: { padding: { bottom: CHART_BOTTOM_PADDING } },
       plugins: {
         title: {
           display: true,
@@ -204,7 +207,7 @@ export function generateClassicV8Charts() {
   const serializeConfig = {
     type: "bar",
     data: {
-      labels,
+      labels: measuredChartLabels(labels),
       datasets: [
         {
           label: "Built-in JSON.stringify",
@@ -224,6 +227,7 @@ export function generateClassicV8Charts() {
     },
     options: {
       responsive: true,
+      layout: { padding: { bottom: CHART_BOTTOM_PADDING } },
       plugins: {
         title: {
           display: true,

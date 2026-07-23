@@ -1,14 +1,5 @@
 # Third-party notices
 
-## json-as
-
-The naive/SWAR/SIMD parsing and serialization kernels adapt algorithms from
-`JairusSW/json-as`, pinned for this port at commit
-`a179de04276fb5970e968fb2e42b8b4f1474913d`. json-as is MIT licensed. The full
-historical inventory, snapshot hashes, porting rules, and license are under
-[`assembly/JSON_AS_UPSTREAM.md`](./assembly/JSON_AS_UPSTREAM.md) and adjacent
-`JSON_AS_*` files.
-
 ## JSONTestSuite
 
 The RFC oracle contains the 318 parsing fixtures from `nst/JSONTestSuite` at
