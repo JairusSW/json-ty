@@ -65,6 +65,8 @@ export interface SchemaLayout<T extends object = Record<string, unknown>> {
     index: number;
     parse: string;
     parseTrusted: string;
+    parseInto: string;
+    parseIntoTrusted: string;
     serialize: string;
     materialize?: string;
   };
@@ -90,11 +92,23 @@ export interface RawNodeBindingOptions {
 export class RawNodeBinding {
   constructor(wasm: Uint8Array | ArrayBuffer | WebAssembly.Module, options?: RawNodeBindingOptions);
   readonly memory: WebAssembly.Memory;
+  readonly u8: Uint8Array;
+  readonly scratch: number;
+  readonly scratchCapacity: number;
+  readonly heapBase: number;
+  /**
+   * Parse resident Wasm bytes into a non-overlapping caller-owned document
+   * buffer. `trusted` means the caller has already validated canonical JSON
+   * and UTF-8. Both spans must remain alive, and the caller must keep the
+   * output region reserved from json-ty's allocator, while the document is
+   * used.
+   */
+  parseInto(schema: SchemaLayout, source: number, length: number, output: number, capacity: number, options?: { trusted?: boolean }): number;
   parse<T extends object>(schema: SchemaLayout<T>, input: string | Uint8Array): T & JsonDocumentView;
   stringify<T extends object>(schema: SchemaLayout<T>, value: T): string;
   stringifyWasm<T extends object>(schema: SchemaLayout<T>, value: T): string;
   stringifyJS<T extends object>(schema: SchemaLayout<T>, value: T): string;
-  parseDynamic(input: string | Uint8Array, options?: { plain?: false }): DynamicValueView;
+  parseDynamic(input: string | Uint8Array, options?: { plain?: false; eager?: boolean; validate?: true }): DynamicValueView;
   parseDynamic(input: string | Uint8Array, options: { plain: true }): unknown;
   stringifyDynamic(value: DynamicValueView | unknown): string | undefined;
   echo(input: string | Uint8Array): string;
@@ -148,6 +162,10 @@ export function readGeneratedComposite(view: object, schema: SchemaLayout, field
 export function writeGeneratedField(view: object, schema: SchemaLayout, field: FieldLayout, value: unknown): void;
 export function syncGeneratedEnumerable(view: object, field: FieldLayout, present: boolean): void;
 export function invalidateGeneratedView(view: object): void;
+export function materializeGeneratedField(view: object, schema: SchemaLayout, field: FieldLayout): void;
+export function hasViewOverlay(view: object, fieldName: string): boolean;
+export function readViewOverlay(view: object, fieldName: string): unknown;
+export function writeViewOverlay(view: object, fieldName: string, value: unknown): void;
 
 export const RAW_RUNTIME: unique symbol;
 export const RAW_DOCUMENT: unique symbol;

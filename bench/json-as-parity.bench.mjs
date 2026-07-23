@@ -5,8 +5,9 @@ import { RawNodeBinding, createSchemaRegistry } from "../src/raw/node-binding.js
 import { parityPayloads } from "./parity/payloads.mjs";
 
 const targetMs = Math.max(100, Number(process.env.JSON_TY_PARITY_MS ?? 500));
-const minimumRatio = Number(process.env.JSON_TY_PARITY_RATIO ?? 0.9);
+const minimumRatio = Number(process.env.JSON_TY_PARITY_RATIO ?? 1.5);
 const jsonAsRoot = resolve(process.env.JSON_AS_ROOT ?? "../json-as");
+const tierMetadata = JSON.parse(readFileSync("build/parity/kernel-tier.json", "utf8"));
 
 function runJsonAsArtifact(file) {
   const artifact = resolve(jsonAsRoot, "build", file);
@@ -139,10 +140,12 @@ const rows = [];
 
 for (const item of cases) {
   const schema = schemas.get(item.schema);
+  const parseSchema = schemas.get(`${item.schema}Lazy`) ?? schema;
   const length = item.rootArray ? runtime._writeRootArrayInput(item.json) : runtime._writeInput(item.json, false, 1);
   const parse = runtime.exports[`parse${schema.name}Trusted`];
   const serialize = runtime.exports[`serialize${schema.name}`];
-  const benchmarkParse = runtime.exports[`benchmarkParse${schema.name}`];
+  const benchmarkParseOwned = runtime.exports[`benchmarkParse${parseSchema.name}`];
+  const benchmarkParse = runtime.exports[`benchmarkParseInto${parseSchema.name}`];
   const benchmarkSerialize = runtime.exports[`benchmarkSerialize${schema.name}`];
   const batch = Math.max(1, Math.min(1024, Math.floor(1_000_000 / item.bytes)));
   const hostParsed = measure(item.bytes, () => {
@@ -150,8 +153,13 @@ for (const item of cases) {
     if (document === 0) throw new Error(`${item.key} parse failed with status ${runtime._result(0)}`);
     release(document);
   });
+  const ownedParsed = measureBatch(item.bytes, batch, () => {
+    if (benchmarkParseOwned(runtime.scratch, length, batch) !== batch) throw new Error(`${item.key} owned batched parse failed`);
+  });
   const parsed = measureBatch(item.bytes, batch, () => {
-    if (benchmarkParse(runtime.scratch, length, batch) !== batch) throw new Error(`${item.key} batched parse failed`);
+    if (benchmarkParse(runtime.scratch, length, runtime.heapBase, runtime.memory.buffer.byteLength - runtime.heapBase, batch) !== batch) {
+      throw new Error(`${item.key} caller-owned-output batched parse failed`);
+    }
   });
 
   const document = parse(runtime.scratch, length) >>> 0;
@@ -185,6 +193,14 @@ for (const item of cases) {
       hostMbps: host.mbps,
       hostNsPerOp: host.nsPerOp,
       hostRatio: host.mbps / baseline,
+      ...(kind === "parse"
+        ? {
+            ownedMbps: ownedParsed.mbps,
+            ownedNsPerOp: ownedParsed.nsPerOp,
+            ownedRatio: ownedParsed.mbps / baseline,
+            parseSchema: parseSchema.name,
+          }
+        : {}),
     });
   }
 }
@@ -194,10 +210,11 @@ let failed = 0;
 for (const row of rows) {
   const pass = row.ratio >= minimumRatio;
   if (!pass) failed++;
-  console.log(`${pass ? "PASS" : "FAIL"} ${row.payload.padEnd(7)} ${row.kind.padEnd(9)} kernel ${row.ratio.toFixed(2)}x, host ${row.hostRatio.toFixed(2)}x  ${Math.round(row.jsonTyMbps).toLocaleString()} vs ${Math.round(row.jsonAsMbps).toLocaleString()} MB/s`);
+  const owned = row.kind === "parse" ? `, owned ${row.ownedRatio.toFixed(2)}x` : "";
+  console.log(`${pass ? "PASS" : "FAIL"} ${row.payload.padEnd(7)} ${row.kind.padEnd(9)} kernel ${row.ratio.toFixed(2)}x${owned}, host ${row.hostRatio.toFixed(2)}x  ${Math.round(row.jsonTyMbps).toLocaleString()} vs ${Math.round(row.jsonAsMbps).toLocaleString()} MB/s`);
 }
 
 mkdirSync("build/logs", { recursive: true });
-writeFileSync("build/logs/json-as-parity.json", JSON.stringify({ generatedAt: new Date().toISOString(), minimumRatio, rows }, null, 2));
+writeFileSync("build/logs/json-as-parity.json", JSON.stringify({ generatedAt: new Date().toISOString(), tierMetadata, minimumRatio, rows }, null, 2));
 if (failed !== 0) throw new Error(`${failed}/${rows.length} json-as parity gates failed`);
 console.log(`PASS ${rows.length}/${rows.length} resident kernel gates`);

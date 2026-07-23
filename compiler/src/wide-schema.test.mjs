@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
-import asc from "assemblyscript/asc";
-import { generateAssemblyModule } from "../lib/assembly-codegen.js";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import { prepareArtifactCompilation } from "../../dist/compiler/artifact-compiler.js";
 import { RawNodeBinding, createSchemaRegistry } from "../../src/raw/node-binding.js";
 
 const fields = Array.from({ length: 150 }, (_, index) => ({
@@ -10,18 +9,31 @@ const fields = Array.from({ length: 150 }, (_, index) => ({
   kind: index % 3 === 0 ? "number" : index % 3 === 1 ? "boolean" : "string",
   ...(index === 63 || index === 127 ? { decorators: { lazy: true } } : {}),
 }));
+const graphFields = fields.map((field, index) => index === 75
+  ? { name: field.name, kind: "object", type: { kind: "object", typeName: "WideChild" } }
+  : field);
 mkdirSync("build", { recursive: true });
 const directory = mkdtempSync(resolve("build/wide-test-"));
-let runtimeImportBase = relative(directory, resolve("src/raw/assembly")).replaceAll("\\", "/");
+let runtimeImportBase = relative(directory, resolve("assembly")).replaceAll("\\", "/");
 if (!runtimeImportBase.startsWith(".")) runtimeImportBase = `./${runtimeImportBase}`;
-const generated = generateAssemblyModule([
+const schemas = [
   { name: "Wide", fields },
   { name: "EscapedKey", fields: [{ name: "value", jsonName: 'a"b\nc', kind: "number" }] },
   { name: "Lexical", fields: [{ name: "n", kind: "number" }, { name: "s", kind: "string" }] },
-], { runtimeImportBase });
+  { name: "WideChild", fields: [{ name: "value", kind: "number" }] },
+  { name: "WideGraph", fields: graphFields },
+];
+const compilation = prepareArtifactCompilation({ schemas, directory, runtimeImportBase });
+const generated = {
+  assembly: readFileSync(compilation.artifact.assemblyPath, "utf8"),
+  layouts: compilation.artifact.layouts,
+};
 const layout = generated.layouts[0];
+const graphLayout = generated.layouts.find((candidate) => candidate.name === "WideGraph");
 assert.match(generated.assembly, /function parseWideOrderedChunk0/);
 assert.match(generated.assembly, /function parseWideOrderedChunk4/);
+assert.match(generated.assembly, /function parseWideGraphRecordOrderedChunk0/);
+assert.match(generated.assembly, /function parseWideGraphRecordOrderedChunk4/);
 assert.equal(layout.bitmapWords, 5);
 assert.equal(layout.nullOffset, 20);
 assert.equal(layout.fieldOffset, 40);
@@ -30,28 +42,7 @@ assert.equal(layout.fields[149].offset, 1232);
 assert.equal(layout.lazyOffset, 1240);
 assert.equal(layout.recordSize, 1264);
 
-const assemblyPath = join(directory, "generated.ts");
-const wasmPath = join(directory, "runtime.wasm");
-writeFileSync(assemblyPath, generated.assembly);
-const { error, stderr } = await asc.main([
-  assemblyPath,
-  "--outFile",
-  wasmPath,
-  "--runtime",
-  "stub",
-  "--importMemory",
-  "--zeroFilledMemory",
-  "--enable",
-  "simd",
-  "--enable",
-  "bulk-memory",
-  "--optimizeLevel",
-  "3",
-  "--shrinkLevel",
-  "0",
-  "--noAssert",
-]);
-if (error) throw new Error(stderr?.toString() || String(error));
+const { wasmPath } = await compilation.compile();
 
 const schema = createSchemaRegistry(generated.layouts).get("Wide");
 const binding = new RawNodeBinding(readFileSync(wasmPath), { scratchCapacity: 1 << 20, heapReserve: 1 << 20 });
@@ -108,5 +99,17 @@ assert.equal(reversed.f0, 0.25, "wide chunk mismatch restarts the keyed tier");
 assert.equal(reversed.f149, "value-149");
 reversed.dispose();
 assert.throws(() => binding.parse(schema, '{"f0":"bad"}'), SyntaxError, "fatal chunk value errors retain parser status");
+
+const graphSchema = createSchemaRegistry(generated.layouts).get("WideGraph");
+const graphObject = Object.fromEntries(graphFields.map((field, index) => [
+  field.name,
+  field.kind === "object" ? { value: 75.5 } : field.kind === "number" ? index + 0.25 : field.kind === "boolean" ? index % 2 === 0 : `value-${index}`,
+]));
+const graphView = binding.parse(graphSchema, Buffer.from(JSON.stringify(graphObject)));
+assert.equal(graphView.f0, 0.25);
+assert.equal(graphView.f75.value, 75.5);
+assert.equal(graphView.f149, "value-149");
+assert.equal(binding.stringify(graphSchema, graphView), JSON.stringify(graphObject));
+graphView.dispose();
 
 console.log("wide multiword schema: all tests passed");

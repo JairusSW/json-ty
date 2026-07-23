@@ -1,13 +1,19 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import asc from "assemblyscript/asc";
-import { generateAssemblyModule } from "../compiler/lib/index.js";
+import { prepareArtifactCompilation } from "../dist/compiler/index.js";
 import { paritySchemas } from "../bench/parity/schemas.mjs";
 import { lazyParitySchemas } from "../bench/parity/lazy-schemas.mjs";
 import { classicSchemas } from "../bench/classic/schemas.mjs";
 
-mkdirSync("build/parity", { recursive: true });
-const generated = generateAssemblyModule([...paritySchemas, ...lazyParitySchemas, ...classicSchemas]);
-const benchmarkSchemas = ["ParityVec3", "ParitySmall", "ParityMedium", "ParityLarge", "Canada", "PoemArray"];
+const benchmarkSchemas = [
+  "ParityVec3",
+  "ParitySmall",
+  "ParitySmallLazy",
+  "ParityMedium",
+  "ParityMediumLazy",
+  "ParityLarge",
+  "ParityLargeLazy",
+  "Canada",
+  "PoemArray",
+];
 const benchmarkAssembly = benchmarkSchemas
   .map(
     (name) => `
@@ -15,6 +21,13 @@ export function benchmarkParse${name}(source: u32, length: u32, iterations: u32)
   for (let index: u32 = 0; index < iterations; index++) {
     const document = parse${name}Trusted(source, length);
     if (document == 0 || releaseDocument(document) != 0) return 0;
+  }
+  return iterations;
+}
+
+export function benchmarkParseInto${name}(source: u32, length: u32, output: u32, capacity: u32, iterations: u32): u32 {
+  for (let index: u32 = 0; index < iterations; index++) {
+    if (parse${name}IntoTrusted(source, length, output, capacity) != output) return 0;
   }
   return iterations;
 }
@@ -27,32 +40,25 @@ export function benchmarkSerialize${name}(document: u32, output: u32, capacity: 
 }
 `,
   )
-  .join("\n");
-writeFileSync("build/parity/generated.ts", generated.assembly + benchmarkAssembly);
-writeFileSync("build/parity/schema-layouts.json", JSON.stringify(generated.layouts, null, 2));
-
-const simdArguments = process.env.JSON_TY_DISABLE_SIMD === "1" ? ["--disable", "simd"] : ["--enable", "simd"];
-const { error, stderr } = await asc.main([
-  "build/parity/generated.ts",
-  "--outFile",
-  "build/parity/runtime.wasm",
-  "--textFile",
-  "build/parity/runtime.wat",
-  "--runtime",
-  "stub",
-  "--importMemory",
-  "--zeroFilledMemory",
-  ...simdArguments,
-  "--enable",
-  "bulk-memory",
-  "--optimizeLevel",
-  "3",
-  "--shrinkLevel",
-  "0",
-  "--noAssert",
-]);
-if (error) {
-  if (stderr) process.stderr.write(stderr.toString());
-  throw error;
+  .join("\n") + `
+export function benchmarkDocumentLifecycle(source: u32, length: u32, documentSize: u32, recordOffset: u32, recordSize: u32, mode: u32, iterations: u32): u32 {
+  for (let index: u32 = 0; index < iterations; index++) {
+    const allocated = allocateDocument(documentSize);
+    if (allocated == 0) return 0;
+    if (mode >= 1) memory.copy(<usize>allocated + 16, <usize>source, length);
+    if (mode >= 2) memory.fill(<usize>allocated + recordOffset, 0, recordSize);
+    if (releaseDocument(allocated) != 0) return 0;
+  }
+  return iterations;
 }
+`;
+const compilation = prepareArtifactCompilation({
+  schemas: [...paritySchemas, ...lazyParitySchemas, ...classicSchemas],
+  directory: "build/parity",
+  assemblySuffix: benchmarkAssembly,
+  kernelTier: process.env.JSON_TY_DISABLE_SIMD === "1"
+    ? "swar"
+    : (process.env.JSON_TY_KERNEL_TIER ?? "simd"),
+});
+await compilation.compile();
 console.log("> build/parity/runtime.wasm");

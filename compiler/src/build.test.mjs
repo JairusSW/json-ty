@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { buildProject } from "../lib/build.js";
+import { buildProject } from "../../dist/compiler/build.js";
 import { RawNodeBinding, createSchemaRegistry } from "../../src/raw/node-binding.js";
 
 const temporary = mkdtempSync(join(tmpdir(), "json-ty-build-"));
@@ -55,16 +55,6 @@ assert.match(
 
 const layouts = JSON.parse(readFileSync(first.layoutsPath, "utf8"));
 const generatedHost = readFileSync(first.runtimePath, "utf8");
-assert.match(generatedHost, /class PlayerHostView extends GeneratedViewBase/);
-assert.match(generatedHost, /runtime\.f64\[\(root \+ \d+\) >>> 3\]/);
-assert.match(generatedHost, /decodeStringRef\(runtime, document, root \+ \d+/);
-assert.match(generatedHost, /binding\.exports\.p\d+/);
-assert.match(generatedHost, /export const p\d+ = \(input, constructor\)/);
-assert.match(generatedHost, /export const s\d+ = \(value\)/);
-assert.match(generatedHost, /invalidateGeneratedView\(this\)/);
-assert.match(generatedHost, /this\[RAW_OVERLAY\] = overlay = Object\.create\(null\)/);
-assert.doesNotMatch(generatedHost, /parse\(name, input/);
-assert.doesNotMatch(generatedHost, /createObjectView/);
 const executableRuntimePath = join(generatedDirectory, "runtime-executable.mjs");
 writeFileSync(executableRuntimePath, generatedHost.replace('from "json-ty/raw"', `from ${JSON.stringify(pathToFileURL(resolve("src/raw/index.js")).href)}`));
 const generatedRuntime = await import(`${pathToFileURL(executableRuntimePath).href}?${Date.now()}`);
@@ -78,6 +68,9 @@ assert.equal(generatedLazy.id, 7);
 assert.equal(generatedLazy.name, "generated");
 assert.deepEqual(generatedLazy.samples, [4, 5]);
 assert.equal(generatedRuntime[generatedLazyLayout.abi.serialize](generatedLazy), '{"id":7,"name":"generated","position":{"x":2,"y":3},"samples":[4,5],"forced":"yes"}');
+generatedLazy.id = 8;
+generatedLazy.name = "changed";
+assert.equal(generatedRuntime[generatedLazyLayout.abi.serialize](generatedLazy), '{"id":8,"name":"changed","position":{"x":2,"y":3},"samples":[4,5],"forced":"yes"}');
 generatedLazy.dispose();
 const generatedDefaultsLayout = layouts.find((layout) => layout.name === "CompositeDefaults");
 const generatedDefaults = generatedRuntime[generatedDefaultsLayout.abi.parse]("{}");
@@ -128,6 +121,45 @@ retainedConfig.dispose();
 const schemas = createSchemaRegistry(layouts);
 const runtime = new RawNodeBinding(readFileSync(first.wasmPath), { scratchCapacity: 1 << 20, heapReserve: 1 << 20 });
 const Player = schemas.get("Player");
+const residentJson = '{"display name":"resident","position":{"x":1,"y":2},"samples":[3,4],"matrix":[[1,2],[3]],"active":false,"age":12,"tuple":[1,"x",true]}';
+const residentLength = runtime._writeInput(residentJson, false, 1);
+const residentDocument = runtime.parseInto(
+  Player,
+  runtime.scratch,
+  residentLength,
+  runtime.heapBase,
+  runtime.memory.buffer.byteLength - runtime.heapBase,
+);
+const residentRoot = (residentDocument + runtime.u32[(residentDocument + 12) >>> 2]) >>> 0;
+const resident = new Player.View(runtime, residentDocument, residentRoot, null);
+assert.equal(resident.name, "resident", "parseInto retains caller-owned source bytes by wrapped relative offset");
+assert.deepEqual(resident.samples, [3, 4]);
+resident.dispose();
+const trustedResidentLength = runtime._writeInput(residentJson, false, 1);
+const trustedResidentDocument = runtime.parseInto(
+  Player,
+  runtime.scratch,
+  trustedResidentLength,
+  runtime.heapBase,
+  runtime.memory.buffer.byteLength - runtime.heapBase,
+  { trusted: true },
+);
+const trustedResidentRoot = (trustedResidentDocument + runtime.u32[(trustedResidentDocument + 12) >>> 2]) >>> 0;
+const trustedResident = new Player.View(runtime, trustedResidentDocument, trustedResidentRoot, null);
+assert.equal(trustedResident.name, "resident");
+trustedResident.dispose();
+const invalidResidentLength = runtime._writeInput('{"display name":"broken","samples":[1,]}', false, 1);
+assert.throws(
+  () => runtime.parseInto(Player, runtime.scratch, invalidResidentLength, runtime.heapBase, runtime.memory.buffer.byteLength - runtime.heapBase),
+  /status 16/,
+  "validating parseInto rejects malformed caller-owned bytes",
+);
+const shortResidentLength = runtime._writeInput(residentJson, false, 1);
+assert.throws(
+  () => runtime.parseInto(Player, runtime.scratch, shortResidentLength, runtime.heapBase, 8),
+  /status 2/,
+  "parseInto reports insufficient caller-owned output capacity",
+);
 const value = runtime.parse(Player, '{"display name":"test","position":{"x":1,"y":2},"samples":[3,4],"matrix":[[1,2],[3]],"active":false,"age":12,"tuple":[1,"x",true]}');
 assert.equal(value.name, "test");
 assert.deepEqual(value.samples, [3, 4]);

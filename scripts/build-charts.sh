@@ -1,5 +1,5 @@
 #!/bin/bash
-# Render the overview result JSON into json-as-style SVG and 3x PNG charts.
+# Render all benchmark reports into json-as-style SVG and 3x PNG charts.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
@@ -11,4 +11,7 @@ fi
 node ./scripts/lib/chart-outliers.test.mjs
 node ./scripts/build-overview-deserialize.mjs
 node ./scripts/build-overview-serialize.mjs
+node ./scripts/build-classic-charts.mjs
+node ./scripts/build-report-charts.mjs
+node ./scripts/sync-benchmark-charts.mjs
 node ./scripts/check-overview-threshold.mjs

@@ -12,7 +12,7 @@ const out = doc.emit();             // splice source: [prefix][new value][suffix
 doc.get("user");                    // parse just one field, on demand
 ```
 
-`spanObject` (in `src/wasm/eager.ts`) records each field's `(off,len)` byte span;
+`spanObject` (in `assembly/wasm/eager.ts`) records each field's `(off,len)` byte span;
 `parseDoc` (in `src/wasm/eager-rt.js`) does the edit-overlay + splice. ASCII docs
 (byte offset == char offset).
 

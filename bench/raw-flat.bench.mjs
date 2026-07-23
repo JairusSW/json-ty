@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { RawNodeBinding, createObjectView } from "../src/raw/node-binding.js";
 
 const wasmBytes = readFileSync("build/raw/runtime.wasm");
+const tierMetadata = JSON.parse(readFileSync("build/raw/kernel-tier.json", "utf8"));
 const runtime = new RawNodeBinding(wasmBytes, {
   scratchCapacity: 1 << 20,
   heapReserve: 16 << 20,
@@ -13,6 +14,7 @@ const inputs = Array.from({ length: 1024 }, (_, index) => `{"id":${index},"value
 const nativeValues = inputs.map((input) => JSON.parse(input));
 const inputBuffers = inputs.map((input) => Buffer.from(input));
 const bytes = inputs.reduce((total, input) => total + Buffer.byteLength(input), 0) / inputs.length;
+const rows = [];
 
 function measure(name, operation, iterations, bytesPerOperation = bytes) {
   let checksum = 0;
@@ -22,6 +24,7 @@ function measure(name, operation, iterations, bytesPerOperation = bytes) {
   const elapsed = performance.now() - start;
   const ops = iterations / (elapsed / 1000);
   const throughput = (bytesPerOperation * ops) / 1e6;
+  rows.push({ name, ops, mbps: throughput, iterations, bytesPerOperation, checksum });
   console.log(`${name.padEnd(28)} ${Math.round(ops).toLocaleString().padStart(14)} ops/s  ${Math.round(throughput).toLocaleString().padStart(7)} MB/s  checksum=${checksum}`);
 }
 
@@ -240,3 +243,10 @@ measure(
   2_000_000,
   Buffer.byteLength(vec3Input),
 );
+
+mkdirSync("build/logs", { recursive: true });
+writeFileSync("build/logs/raw.json", JSON.stringify({
+  generatedAt: new Date().toISOString(),
+  tierMetadata,
+  rows,
+}, null, 2));

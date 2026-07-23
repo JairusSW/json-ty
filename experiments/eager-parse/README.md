@@ -12,7 +12,7 @@ object/array becomes its own flat table** and the parent slot holds a **u32
 pointer** to it. JS reads each table via typed arrays and follows pointers — zero
 per-field allocation, no slot-decode object, no `Map`.
 
-- `assembly/eager.ts` — `objTable` / `arrTable` / `primTable`. Scalars inline
+- `assembly/experiments/eager-parse/eager.ts` — `objTable` / `arrTable` / `primTable`. Scalars inline
   (`f64`), strings as `(off,len)` spans, nested as u32 region pointers. Reuses
   `parseF64`/`skipString`/`scanComposite`. **One WASM call per parse** —
   recursion happens entirely inside it; JS follows pointers via typed arrays.

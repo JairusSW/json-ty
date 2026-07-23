@@ -12,7 +12,7 @@ const companionTransformPath = join(temporary, "companion-transform.mjs");
 const configPath = join(temporary, "tsconfig.json");
 const generatedDirectory = join(temporary, "generated");
 const outputDirectory = join(temporary, "dist");
-const jsonTyTransformPath = resolve("compiler/lib/ts-patch.js");
+const jsonTyTransformPath = resolve("dist/compiler/ts-patch.js");
 const tspcPath = resolve("node_modules/ts-patch/bin/tspc.js");
 
 const resolverModules = join(temporary, "node_modules");

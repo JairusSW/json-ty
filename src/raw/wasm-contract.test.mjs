@@ -9,7 +9,9 @@ const bytes = readFileSync("build/raw/runtime.wasm");
 // JSON.stringify escape/surrogate behavior to every typed and dynamic string.
 // The verified-candidate protocol also includes one shared byte comparator so
 // source copying is enabled only after an exact first serialization.
-assert.ok(bytes.byteLength <= 116_000, `raw artifact unexpectedly grew to ${bytes.byteLength} bytes`);
+// Caller-owned strict/trusted parsing adds the shared external-document path,
+// while tiny records retain a deliberately unrolled canonical fast path.
+assert.ok(bytes.byteLength <= 132_000, `raw artifact unexpectedly grew to ${bytes.byteLength} bytes`);
 const module = new WebAssembly.Module(bytes);
 assert.deepEqual(
   WebAssembly.Module.imports(module).map(({ module: namespace, name, kind }) => ({ module: namespace, name, kind })),
@@ -20,7 +22,7 @@ assert.deepEqual(
 );
 
 const exports = new Set(WebAssembly.Module.exports(module).map(({ name }) => name));
-for (const name of ["parseMetric", "parseMetricTrusted", "serializeMetric", "parsePlayer", "parsePlayerTrusted", "serializePlayer", "parseDynamic", "parseDynamicTrusted", "serializeDynamic", "materializeLazyRecordField"]) {
+for (const name of ["parseMetric", "parseMetricTrusted", "serializeMetric", "parsePlayer", "parsePlayerTrusted", "serializePlayer", "parseDynamic", "parseDynamicTrusted", "parseDynamicEager", "parseDynamicEagerTrusted", "materializeDynamic", "materializeDynamicTree", "serializeDynamic", "materializeLazyRecordField"]) {
   assert.ok(exports.has(name), `missing ABI export ${name}`);
 }
 

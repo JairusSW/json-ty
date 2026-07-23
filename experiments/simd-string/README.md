@@ -2,11 +2,11 @@
 
 A JSON string serializer's hot work is **finding bytes that need escaping**
 (`< 0x20`, `"`, `\`). For a clean string the output is just the input wrapped in
-quotes, so the scan *is* the work. `assembly/escape.ts` does that scan 16 bytes
+quotes, so the scan *is* the work. `assembly/experiments/simd-string/escape.ts` does that scan 16 bytes
 at a time with `v128`; `bench.mjs` compares it to native `JSON.stringify`.
 
 ```bash
-npx asc experiments/simd-string/assembly/escape.ts \
+npx asc assembly/experiments/simd-string/escape.ts \
   --outFile experiments/simd-string/build/escape.wasm \
   -O3 --noAssert --bindings raw --runtime stub --exportRuntime --enable simd
 node experiments/simd-string/bench.mjs
@@ -105,7 +105,7 @@ that's the Node copy-in. Verified correct on ASCII + unicode (`café €17 😀`
 
 ## Dirty-path stress test — 1 MiB, full WASM round-trip (`escape-density.mjs`)
 
-The real escaper (`escape()` in `assembly/escape.ts`) writes the escaped `"..."`
+The real escaper (`escape()` in `assembly/experiments/simd-string/escape.ts`) writes the escaped `"..."`
 into an output buffer (SIMD-skips clean runs, bulk-copies them, escapes the rest
 byte-for-byte matching `JSON.stringify`). `wasm` here is the **full round trip**:
 `Buffer.write` in → SIMD escape → `Buffer.toString` out. `json-ty` is the real

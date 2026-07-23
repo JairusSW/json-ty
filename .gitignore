@@ -7,6 +7,10 @@ as-tral
 *.lockb
 .vscode/
 build/
+/dist/
 src/playground.js
 src/wasm/eager.js
 src/wasm/eager.d.ts
+/AGENTS.md
+/docs/
+/.scratch/

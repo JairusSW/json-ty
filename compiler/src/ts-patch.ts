@@ -6,6 +6,7 @@ import {
   generateProjectSync,
   type GenerateProjectOptions,
 } from "./build.js";
+import { resolveKernelTier, type KernelTier } from "./kernel-tier.js";
 
 export interface JsonTyPluginConfig extends PluginConfig {
   generatedDirectory?: string;
@@ -13,6 +14,7 @@ export interface JsonTyPluginConfig extends PluginConfig {
   runtimeModuleSpecifier?: string;
   optimizeLevel?: 0 | 1 | 2 | 3;
   shrinkLevel?: 0 | 1 | 2;
+  kernelTier?: KernelTier;
 }
 
 function projectDirectory(program: ts.Program): string {
@@ -47,6 +49,7 @@ export default function jsonTyTransform(
       : resolve(generatedDirectory, "cache"),
     optimizeLevel: config.optimizeLevel,
     shrinkLevel: config.shrinkLevel,
+    kernelTier: resolveKernelTier(config.kernelTier),
   };
   const generated = generateProjectSync(program, buildOptions);
   return createGeneratedProjectTransformer(

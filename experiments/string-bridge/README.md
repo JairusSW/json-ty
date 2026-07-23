@@ -9,7 +9,7 @@ transcode.
 
 ## Setup
 
-- `assembly/bridge.ts` — tiny AS module: a stable 64 MiB scratch buffer plus
+- `assembly/experiments/string-bridge/bridge.ts` — tiny AS module: a stable 64 MiB scratch buffer plus
   `ingestUtf8` (JS→WASM: decode UTF-8 → AS string), `validateUtf8` (SIMD scan,
   no allocation), and `emitUtf8` (WASM→JS: encode the held string → UTF-8).
 - Built with **`--runtime stub`** (bump allocator, no GC — max allocation
@@ -20,7 +20,7 @@ transcode.
 
 ```bash
 # build (asc resolves utf-as via a direct path import — see bridge.ts)
-npx asc experiments/string-bridge/assembly/bridge.ts \
+npx asc assembly/experiments/string-bridge/bridge.ts \
   --outFile experiments/string-bridge/build/bridge.wasm \
   -O3 --noAssert --bindings raw --runtime stub --exportRuntime \
   --enable simd --enable bulk-memory

@@ -5,7 +5,7 @@ How the WASM approach scales across small / medium / large realistic JSON
 (schema-agnostic), so it indexes any document.
 
 ```bash
-npx asc experiments/payload-scaling/assembly/tokenizer.ts \
+npx asc assembly/experiments/payload-scaling/tokenizer.ts \
   --outFile experiments/payload-scaling/build/tokenizer.wasm \
   -O3 --noAssert --bindings raw --runtime stub --exportRuntime --enable simd
 node experiments/payload-scaling/scaling.mjs   # -> build/logs/scaling.json

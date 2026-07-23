@@ -20,16 +20,26 @@ serialization policy all consume this IR.
 For each project, generation produces one Wasm module. Shared raw kernels are
 emitted once; records, array shapes, tuples, and union dispatch receive
 schema-specialized functions. The build uses the stub runtime, imported memory,
-SIMD, bulk memory, `-O3`, no assertions, and no generated loader glue.
+the selected compile-time kernel tier, bulk memory, `-O3`, no assertions, and
+no generated loader glue. SWAR is the default; naive is the RFC oracle and SIMD
+is explicit. The compiler injects an integer tier constant and Binaryen removes
+unselected bodies, so generated schema code has no tier import or runtime branch.
+The artifact-compiler module owns generated paths, layout writes, compiler
+flags, diagnostics, synchronous/asynchronous invocation, and optional Wasm
+caching. Project builds, tests, and benchmark scripts are adapters that state
+their schemas and compilation intent.
 
 The two backends share a canonical per-type plan, then dispatch through parallel
 type-emitter registries under `compiler/src/emit/assembly` and
-`compiler/src/emit/host`. Number, boolean, string, object, array/tuple, and union
+`compiler/src/host-artifact/emit`. Number, boolean, string, object, array/tuple, and union
 policy therefore has one explicit extension point on each side instead of being
 scattered through root-schema switches. The AssemblyScript emitters generate
 fixed-offset parse/write expressions; the host emitters generate fixed-mask
 accessors and specialized scalar/string setters. Composite mutation alone uses
-a shared cold helper.
+a shared cold helper. The enclosing host-artifact module owns the complete
+generated JavaScript runtime, including view classes, schema registration,
+compact ABI exports, and transformer bindings; build orchestration consumes the
+single resulting artifact without knowing raw view-state policy.
 
 Typed call sites are rewritten to hygienically named imports of compact
 schema-specific host exports (`pN`/`sN`). The runtime object is imported only
@@ -37,10 +47,19 @@ when a file also contains a dynamic or otherwise indirect call. Those host
 exports cache their matching Wasm function, so a normal typed parse or stringify
 crosses the boundary once without a runtime name lookup.
 
+Raw and generated object views share the document/view-state module. It owns
+symbol identity, construction, root ownership and release, serialized/canonical
+invalidation, overlays, enumerable compatibility, and lazy materialization.
+The raw adapter retains specialized hot getters, while the generated adapter
+retains emitted fixed-offset getters; both delegate state transitions to the
+same invariant owner.
+
 ## AssemblyScript kernel library
 
-The maintained implementation lives under `src/raw/assembly`, divided into
-`deserialize/`, `serialize/`, and `layout/`. Null, boolean, number, string,
+The maintained implementation lives under `assembly`, divided into
+`deserialize/`, `serialize/`, `util/`, and `layout/`. Naive and SWAR kernels
+retain json-as's relative file structure beneath their deserialize/serialize
+directories. Null, boolean, number, string,
 array, struct, and dynamic JSON each have a dedicated module. The bounded UTF-8
 writer lives in `serialize/writer.ts`; the grammar/SIMD/SWAR scanner lives in
 `deserialize/scanner.ts`. Root-level `parser.ts`, `writer.ts`, and `dynamic.ts`
@@ -126,8 +145,22 @@ Generated object parsers validate the complete UTF-8 JSON grammar, skip unknown
 values structurally, accept arbitrary property order, apply presence/null
 tracking and defaults, and retain string spans. SIMD accelerates ASCII/string
 classification while scalar logic owns boundary and escape validation.
-When SIMD is disabled, an 8-byte SWAR classifier feeds the same bounded scalar
-validator. The differential fuzz suite compiles and runs both artifacts.
+The naive tier scans one byte/scalar at a time and is checked against all 318
+pinned JSONTestSuite parsing fixtures. SWAR uses json-as's 16→8→scalar probing,
+pair-multiply digit folds, and candidate-confirmation rules over UTF-8 bytes.
+SIMD retains 16-byte classification where it wins. Tier selection is compile
+time, and the differential/fuzz harness builds all three artifacts.
+
+The low-level parser has two ownership contracts. The ordinary entry point
+allocates an independently owned document and copies any source bytes retained
+by string/lazy fields. `parseInto` instead reads a caller-owned resident byte
+span and writes the document graph into a separate caller-owned bounded byte
+span. Its document-relative source offsets deliberately wrap modulo 2^32, so
+Wasm and host readers reach the external source without an intermediate copy.
+The validating form retains the complete RFC grammar checks. The trusted form
+is reserved for caller-validated canonical JSON/UTF-8 and uses json-as-shaped
+SWAR or 16-byte SIMD value-end scans for deferred composites. Releasing an
+external document is a no-op; the caller owns both spans and their lifetimes.
 
 Flat and nested records first try a canonical
 ordered-property tier. It compares packed `"key":` bytes and parses values

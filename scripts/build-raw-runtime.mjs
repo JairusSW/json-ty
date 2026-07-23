@@ -1,10 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import asc from "assemblyscript/asc";
-import { generateAssemblyModule } from "../compiler/lib/index.js";
+import { prepareArtifactCompilation } from "../dist/compiler/index.js";
 
-mkdirSync("build/raw", { recursive: true });
-
-const generated = generateAssemblyModule([
+const schemas = [
   {
     name: "Metric",
     fields: [
@@ -141,15 +137,13 @@ const generated = generateAssemblyModule([
       },
     ],
   },
-]);
-const optimizeLevel = process.env.JSON_TY_OPTIMIZE_LEVEL ?? "3";
-const simdArguments = process.env.JSON_TY_DISABLE_SIMD === "1" ? ["--disable", "simd"] : ["--enable", "simd"];
-writeFileSync("build/raw/generated.ts", generated.assembly);
-writeFileSync("build/raw/schema-layouts.json", JSON.stringify(generated.layouts, null, 2));
-
-const { error, stderr } = await asc.main(["build/raw/generated.ts", "--outFile", "build/raw/runtime.wasm", "--textFile", "build/raw/runtime.wat", "--runtime", "stub", "--importMemory", "--zeroFilledMemory", ...simdArguments, "--enable", "bulk-memory", "--optimizeLevel", optimizeLevel, "--shrinkLevel", "0", "--noAssert"]);
-
-if (error) {
-  if (stderr) process.stderr.write(stderr.toString());
-  throw error;
-}
+];
+const compilation = prepareArtifactCompilation({
+  schemas,
+  directory: "build/raw",
+  optimizeLevel: Number(process.env.JSON_TY_OPTIMIZE_LEVEL ?? "3"),
+  kernelTier: process.env.JSON_TY_DISABLE_SIMD === "1"
+    ? "swar"
+    : (process.env.JSON_TY_KERNEL_TIER ?? "swar"),
+});
+await compilation.compile();
