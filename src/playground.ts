@@ -1,7 +1,7 @@
 /// <reference path="./index.d.ts" />
 // Demos of json-ty working end-to-end. Compiled through the transform:
 //   npx tsc src/playground.ts --outDir src ...   (see run below)
-//   node src/playground.js
+//   node dist/src/playground.js
 import { JSON } from "./index.js";
 
 

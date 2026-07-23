@@ -1,14 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { RawNodeBinding, createSchemaRegistry } from "../src/raw/node-binding.js";
 import { classicCorpora, classicSeries } from "./classic/manifest.mjs";
 import { projections, twitterQueries } from "./classic/projections.mjs";
 
 const MIB = 1 << 20;
+const WASM_PAGE = 1 << 16;
+const tierMetadata = JSON.parse(readFileSync("build/classic/kernel-tier.json", "utf8"));
 const targetMs = Math.max(25, Number(process.env.JSON_TY_BENCH_MS ?? 200));
 const maximumBytes = process.env.JSON_TY_CLASSIC_MAX_BYTES === undefined ? Number.POSITIVE_INFINITY : Number(process.env.JSON_TY_CLASSIC_MAX_BYTES);
-const inputKind = process.env.JSON_TY_CLASSIC_INPUT ?? "string";
+const inputKind = process.env.JSON_TY_CLASSIC_INPUT ?? "buffer";
+const eagerBackend = process.env.JSON_TY_CLASSIC_EAGER_BACKEND ?? "graph";
 if (inputKind !== "string" && inputKind !== "buffer") throw new Error("JSON_TY_CLASSIC_INPUT must be string or buffer");
 
 function selectedValues(name, defaults) {
@@ -29,6 +32,14 @@ const selectedCorpora = selectedValues(
 );
 const selectedVariants = selectedValues("JSON_TY_CLASSIC_VARIANTS", ["native", "eager", "lazy", "obj"]);
 const selectedFormats = selectedValues("JSON_TY_CLASSIC_FORMATS", ["pretty", "min"]);
+const completeSelection =
+  classicCorpora.every(({ key }) => selectedCorpora.has(key)) &&
+  ["native", "eager", "lazy", "obj"].every((value) => selectedVariants.has(value)) &&
+  ["pretty", "min"].every((value) => selectedFormats.has(value)) &&
+  !Number.isFinite(maximumBytes);
+const reportPath =
+  process.env.JSON_TY_CLASSIC_REPORT ??
+  (completeSelection ? "build/logs/classic.json" : "build/logs/classic-partial.json");
 
 function findPayloadDirectory() {
   const candidates = [process.env.JSON_TY_CLASSIC_PAYLOADS, "../json-as/assembly/__benches__/payloads", "./assembly/__benches__/payloads"].filter(Boolean);
@@ -50,14 +61,18 @@ const payloadSizes = selected.flatMap((corpus) =>
     .filter((bytes) => bytes <= maximumBytes),
 );
 const largestPayload = Math.max(...payloadSizes, 1);
-const nextPowerOfTwo = (value) => 2 ** Math.ceil(Math.log2(value));
-const scratchCapacity = Math.max(8 * MIB, nextPowerOfTwo(largestPayload + MIB));
-const heapReserve = Math.max(64 * MIB, Math.min(256 * MIB, nextPowerOfTwo(largestPayload * 2 + MIB)));
+const alignPage = (value) => Math.ceil(value / WASM_PAGE) * WASM_PAGE;
+const scratchCapacity = Math.max(8 * MIB, alignPage(largestPayload + MIB));
+// Parsing can grow the wilderness document in-place. Keep only a small initial
+// heap here instead of committing a corpus-sized reserve before the benchmark.
+const heapReserve = 8 * MIB;
 
 const wasm = readFileSync("build/classic/runtime.wasm");
 const layouts = JSON.parse(readFileSync("build/classic/schema-layouts.json", "utf8"));
 const schemas = createSchemaRegistry(layouts);
 const runtime = new RawNodeBinding(wasm, { scratchCapacity, heapReserve });
+const plainOptions = Object.freeze({ plain: true });
+const eagerOptions = Object.freeze({ eager: true, validate: true });
 let sink = 0;
 
 function consume(value) {
@@ -104,7 +119,7 @@ function measure(corpus, format, kind, series, description, bytes, operation, be
     mbps,
     gbps: mbps / 1000,
     opsPerSecond: operations / seconds,
-    features: ["utf8", "stub-runtime", "simd", `node-${inputKind}`],
+    features: ["utf8", "stub-runtime", tierMetadata.kernelTier, `node-${inputKind}`],
   };
   const name = `${corpus.key}-${format}`.padEnd(24);
   console.log(`${name} ${kind.padEnd(11)} ${description.padEnd(30)} ${Math.round(mbps).toLocaleString().padStart(7)} MB/s`);
@@ -164,12 +179,21 @@ function parseTyped(schema, input, project = null) {
 
 function parseDynamic(input, project = null, plain = false) {
   if (plain) {
-    const value = runtime.parseDynamic(input, { plain: true });
-    return project ? project(value) : consume(value);
+    const value = runtime.parseDynamic(input, plainOptions);
+    return project ? project(value) : value;
   }
   const value = runtime.parseDynamic(input);
   try {
     return project ? project(value) : value.type.length;
+  } finally {
+    value.dispose();
+  }
+}
+
+function parseDynamicEager(input) {
+  const value = runtime.parseDynamic(input, eagerOptions);
+  try {
+    return value._document();
   } finally {
     value.dispose();
   }
@@ -183,7 +207,12 @@ function stringifyTypedUncached(schema, value) {
 function stringifyDynamicUncached(value) {
   const capacity = runtime.scratchCapacity - 128;
   runtime._invalidateScratchInput();
-  runtime._serializeDynamic(value._document(), runtime.scratch, capacity);
+  runtime._callWithMemoryRefresh(
+    runtime._serializeDynamic,
+    value._document(),
+    runtime.scratch,
+    capacity,
+  );
   if (runtime._result(0) !== 0) throw new RangeError(`Raw dynamic stringify failed with status ${runtime._result(0)}`);
   const output = runtime._result(20);
   const length = runtime._result(24);
@@ -220,7 +249,9 @@ for (const corpus of selected) {
   const nativeMin = min ? JSON.parse(min.source) : null;
   if (nativeMin !== null) assertFixture(corpus, nativeMin);
   const schema = corpus.typed ? schemas.get(corpus.typed) : null;
+  const lazySchema = corpus.typedLazy ? schemas.get(corpus.typedLazy) : schema;
   if (corpus.typed && !schema) throw new Error(`Missing classic schema ${corpus.typed}`);
+  if (corpus.typedLazy && !lazySchema) throw new Error(`Missing classic lazy schema ${corpus.typedLazy}`);
   if (!schema) skipped.push({ payload: corpus.key, variant: "typed", reason: corpus.limitation });
   const projection = projections[corpus.key];
   let retainedTyped = null;
@@ -236,15 +267,27 @@ for (const corpus of selected) {
         results.push(measure(corpus, fixture.format, "deserialize", "native", "Built-in JSON (JS)", fixture.bytes, () => JSON.parse(nextInput())));
       }
       if (selectedVariants.has("eager")) {
-        const operation = schema ? () => parseTyped(schema, nextInput()) : () => parseDynamic(nextInput(), null, true);
-        results.push(measure(corpus, fixture.format, "deserialize", "eager", schema ? "json-ty (typed eager)" : "json-ty (dynamic plain)", fixture.bytes, operation));
+        const graphBackend = eagerBackend === "graph";
+        const operation = graphBackend
+          ? () => parseDynamicEager(nextInput())
+          : () => parseDynamic(nextInput(), null, true);
+        results.push(measure(corpus, fixture.format, "deserialize", "eager", graphBackend ? "json-ty (validating eager graph)" : "json-ty (native plain backend)", fixture.bytes, operation));
       }
       if (selectedVariants.has("lazy")) {
-        const operation = schema ? () => parseTyped(schema, residentInput, projection) : () => parseDynamic(residentInput, projection);
-        results.push(measure(corpus, fixture.format, "deserialize", "lazy", schema ? "json-ty (typed view)" : "json-ty (dynamic view)", fixture.bytes, operation));
+        const operation = lazySchema ? () => parseTyped(lazySchema, residentInput) : () => parseDynamic(residentInput);
+        results.push(measure(corpus, fixture.format, "deserialize", "lazy", lazySchema ? "json-ty (typed view)" : "json-ty (dynamic view)", fixture.bytes, operation));
+        if (projection) {
+          const projected = lazySchema
+            ? () => parseTyped(lazySchema, residentInput, projection)
+            : () => parseDynamic(residentInput, projection);
+          results.push(measure(corpus, fixture.format, "deserialize", "lazy", lazySchema ? "json-ty (typed view + projection)" : "json-ty (dynamic view + projection)", fixture.bytes, projected, "projection"));
+        }
       }
       if (selectedVariants.has("obj")) {
-        results.push(measure(corpus, fixture.format, "deserialize", "obj", "json-ty (JSON.Obj)", fixture.bytes, () => parseDynamic(residentInput, projection)));
+        results.push(measure(corpus, fixture.format, "deserialize", "obj", "json-ty (JSON.Obj)", fixture.bytes, () => parseDynamic(residentInput)));
+        if (projection) {
+          results.push(measure(corpus, fixture.format, "deserialize", "obj", "json-ty (JSON.Obj + projection)", fixture.bytes, () => parseDynamic(residentInput, projection), "projection"));
+        }
         // json-as keeps a historical "pretty" JSON.Obj case for the two
         // min-only yyjson corpora, pointing it at the same minified fixture.
         if (fixture.format === "min" && corpus.objPrettyAlias && selectedFormats.has("pretty")) {
@@ -290,11 +333,13 @@ for (const corpus of selected) {
   }
 }
 
-mkdirSync("build/logs", { recursive: true });
+mkdirSync(dirname(reportPath), { recursive: true });
 const report = {
   generatedAt: new Date().toISOString(),
+  tierMetadata,
   targetMs,
   inputKind,
+  eagerBackend,
   payloadDirectory,
   maximumBytes: Number.isFinite(maximumBytes) ? maximumBytes : null,
   scratchCapacity,
@@ -309,5 +354,5 @@ const report = {
   skipped,
   results,
 };
-writeFileSync("build/logs/classic.json", JSON.stringify(report, null, 2));
-console.log(`> build/logs/classic.json (${results.length} measurements, sink=${sink})`);
+writeFileSync(reportPath, JSON.stringify(report, null, 2));
+console.log(`> ${reportPath} (${results.length} measurements, sink=${sink})`);

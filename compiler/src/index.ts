@@ -1,9 +1,10 @@
 export * from "./schema-ir.js";
-export * from "./assembly-codegen.js";
+export * from "./artifact-compiler.js";
+export * from "./kernel-tier.js";
+export * from "./record-codegen/index.js";
 export * from "./program-analyzer.js";
 export * from "./call-transformer.js";
-export * from "./complex-codegen.js";
 export * from "./build.js";
-export * from "./host-codegen.js";
+export * from "./host-artifact/index.js";
 export { default as tsPatchTransform } from "./ts-patch.js";
 export type { JsonTyPluginConfig } from "./ts-patch.js";

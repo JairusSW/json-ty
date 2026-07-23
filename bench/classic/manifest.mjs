@@ -12,6 +12,7 @@ export const classicCorpora = [
     label: "Canada",
     files: { pretty: "canada.pretty.json", min: "canada.min.json" },
     typed: "Canada",
+    typedLazy: "CanadaLazy",
   },
   {
     key: "citm_catalog",
@@ -74,7 +75,7 @@ export const classicCorpora = [
 export const classicSeries = {
   deserialize: [
     ["native", "Built-in JSON (JS)"],
-    ["eager", "json-ty (eager/plain)"],
+    ["eager", "json-ty (validating eager graph)"],
     ["lazy", "json-ty (lazy view)"],
     ["obj", "json-ty (JSON.Obj)"],
   ],

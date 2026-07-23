@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { RawNodeBinding, bindSchemaClass, createObjectView, createSchemaRegistry } from "./node-binding.js";
-import { JSON as JsonTy } from "../index.js";
+import { JSON as JsonTy } from "../../dist/src/index.js";
 
 const wasmBytes = readFileSync("build/raw/runtime.wasm");
 const runtime = new RawNodeBinding(wasmBytes, {
@@ -332,11 +332,18 @@ assert.throws(() => runtime.parse(PetHolder, '{"pet":{"kind":"bird"},"pets":[]}'
 
 const dynamicInput = '{"name":"café","items":[1,true,null,{"x":"a\\nb"}],"wide":{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8},"dup":1,"dup":2}';
 const dynamic = runtime.parseDynamic(dynamicInput);
+const dynamicDocument = dynamic._document();
+const dynamicGraphBeforeAccess = runtime.u32[(dynamicDocument + 16) >>> 2];
 assert.equal(dynamic.type, "object");
 assert.equal(dynamic.get("name").value, "café");
-assert.equal(dynamic.get("items").at(1).value, true);
-assert.equal(dynamic.get("items").at(2).value, null);
-assert.equal(dynamic.get("items").at(3).get("x").value, "a\nb");
+const dynamicItems = dynamic.get("items");
+assert.ok(
+  runtime.u32[(dynamicDocument + 16) >>> 2] > dynamicGraphBeforeAccess,
+  "nested dynamic containers materialize only when accessed",
+);
+assert.equal(dynamicItems.at(1).value, true);
+assert.equal(dynamicItems.at(2).value, null);
+assert.equal(dynamicItems.at(3).get("x").value, "a\nb");
 assert.equal(dynamic.get("wide").get("h").value, 8);
 assert.equal(dynamic.get("dup").value, 2);
 assert.equal(dynamic.stringify(), dynamicInput);
@@ -346,6 +353,43 @@ dynamic.dispose();
 assert.throws(() => dynamicChild.length, ReferenceError);
 
 assert.deepEqual(runtime.parseDynamic(Buffer.from('[5e-324,{"ok":false}]'), { plain: true }), [5e-324, { ok: false }]);
+const eagerDynamic = runtime.parseDynamic(Buffer.from(dynamicInput), { eager: true });
+const eagerCursor = runtime.u32[(eagerDynamic._document() + 16) >>> 2];
+assert.deepEqual(eagerDynamic.toObject(), JSON.parse(dynamicInput));
+assert.equal(
+  runtime.u32[(eagerDynamic._document() + 16) >>> 2],
+  eagerCursor,
+  "eager dynamic parsing materializes the complete graph in one pass",
+);
+eagerDynamic.dispose();
+const validatingEagerDynamic = runtime.parseDynamic(Buffer.from(dynamicInput), {
+  eager: true,
+  validate: true,
+});
+assert.deepEqual(validatingEagerDynamic.toObject(), JSON.parse(dynamicInput));
+validatingEagerDynamic.dispose();
+assert.throws(
+  () => runtime.parseDynamic(Buffer.from("{}"), { validate: false }),
+  /validation cannot be disabled/,
+);
+assert.throws(
+  () => runtime.parseDynamic(Buffer.from("{}"), { trusted: true }),
+  /trusted input is unsupported/,
+);
+const prototypeKeyView = runtime.parseDynamic('{"__proto__":{"polluted":true}}');
+const prototypeKeyValues = [
+  prototypeKeyView.toObject(),
+  runtime.parseDynamic('{"__proto__":{"polluted":true}}', { plain: true }),
+];
+prototypeKeyView.dispose();
+for (const value of prototypeKeyValues) {
+  assert.ok(Object.hasOwn(value, "__proto__"));
+  assert.equal(Object.getPrototypeOf(value), Object.prototype);
+  assert.deepEqual(value.__proto__, { polluted: true });
+}
+const prettyDynamic = runtime.parseDynamic('{ "outer": [ { "n": -0 }, true ] }');
+assert.equal(prettyDynamic.stringify(), '{"outer":[{"n":0},true]}');
+prettyDynamic.dispose();
 assert.equal(runtime.stringifyDynamic({ raw: new JsonTy.Raw('{"kept":[1,true]}'), boxed: new Number(4) }), '{"raw":{"kept":[1,true]},"boxed":4}');
 const [RawHolder] = createSchemaRegistry([
   {
@@ -366,7 +410,7 @@ const [RawHolder] = createSchemaRegistry([
   },
 ]).values();
 assert.equal(runtime.stringify(RawHolder, { payload: new JsonTy.Raw('{"kept":[1,true]}') }), '{"payload":{"kept":[1,true]}}');
-for (const invalidDynamic of ["[1,]", '{"x" 1}', "[1}", "truth"]) {
+for (const invalidDynamic of ["[1,]", '{"x" 1}', "[1}", "truth", '{"nested":{"items":[1,]}}', '[[{"x" 1}]]']) {
   assert.throws(() => runtime.parseDynamic(invalidDynamic), SyntaxError);
 }
 
@@ -380,6 +424,44 @@ const grownDocument = growthRuntime.commit(largeValue);
 assert.ok(growthRuntime.memory.buffer.byteLength > beforeGrowth);
 assert.equal(growthRuntime.read(grownDocument.pointer, grownDocument.length), largeValue);
 growthRuntime.release(grownDocument.pointer);
+
+const growableRuntime = new RawNodeBinding(wasmBytes, {
+  scratchCapacity: 2 << 20,
+  heapReserve: 64 << 10,
+});
+const releasedHole = growableRuntime.commit("h".repeat(512 << 10));
+const retainedGuard = growableRuntime.commit("guard");
+growableRuntime.release(releasedHole.pointer);
+const denseArraySource = `[${"0,".repeat(50_000)}0]`;
+const beforeDynamicGrowth = growableRuntime.memory.buffer.byteLength;
+const denseArray = growableRuntime.parseDynamic(Buffer.from(denseArraySource), {
+  eager: true,
+  validate: true,
+});
+assert.equal(denseArray.length, 50_001);
+assert.ok(
+  growableRuntime.memory.buffer.byteLength > beforeDynamicGrowth,
+  "dense eager graphs grow their wilderness document and refresh host views",
+);
+assert.equal(denseArray.stringify(), denseArraySource);
+denseArray.dispose();
+growableRuntime.release(retainedGuard.pointer);
+assert.equal(
+  growableRuntime.exports.persistentHeapTop(),
+  growableRuntime.exports.persistentHeapBase(),
+  "coalesced wilderness holes return to the bump allocator",
+);
+const deferredDense = growableRuntime.parseDynamic(
+  Buffer.from(`{"items":${denseArraySource}}`),
+);
+const newerDynamic = growableRuntime.parseDynamic(Buffer.from('{"newer":true}'));
+assert.equal(
+  deferredDense.get("items").length,
+  50_001,
+  "validated lazy documents reserve their exact deferred graph before newer allocations",
+);
+newerDynamic.dispose();
+deferredDense.dispose();
 
 for (const invalid of ['{"id":01,"value":2,"label":"x","ok":true}', '{"id":1,"value":2,"label":"unterminated,"ok":true}', '{"id":1,"value":2,"label":"x","ok":truth}', '{"id":1,"value":2,"label":"x","ok":true} trailing', '{"id":1,"extra":[1}}', '{"id":1,"extra":{"x" 1}}', '{"id":1,"extra":[1,]}']) {
   assert.throws(() => runtime.parse(Metric, invalid), SyntaxError);

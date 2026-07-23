@@ -27,7 +27,7 @@ npm run test:all
 
 ```text
 compiler/                 TypeScript analysis, schema IR, code generation
-src/raw/assembly/         Allocation-free AssemblyScript kernels and layouts
+assembly/                 AssemblyScript kernels, prototypes, and experiments
 src/raw/node-binding.js   Node memory, views, lowering, and Wasm ABI
 src/raw/browser-binding.js
 bench/                    Overview, classic, parity, and lazy benchmarks
@@ -61,7 +61,7 @@ changes should consider:
 - defaults, nullability, decorators, lazy fields, and mutation;
 - arrays, tuples, recursive graphs, and discriminated unions;
 - memory growth, release, reuse, and stale views;
-- SIMD and scalar builds.
+- naive, SWAR, and SIMD compile-time tiers.
 
 Run:
 

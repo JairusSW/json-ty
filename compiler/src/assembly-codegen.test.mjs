@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateAssemblyModule } from "../lib/assembly-codegen.js";
+import { generateAssemblyModule } from "../../dist/compiler/record-codegen/index.js";
 
 const generatedModule = generateAssemblyModule([
   {
@@ -44,11 +44,15 @@ assert.deepEqual(generatedModule.layouts[0].abi, {
   index: 0,
   parse: "p0",
   parseTrusted: "t0",
+  parseInto: "pi0",
+  parseIntoTrusted: "pu0",
   serialize: "s0",
   materialize: "m0",
 });
 assert.match(generated, /export function p0\(/);
 assert.match(generated, /export function t0\(/);
+assert.match(generated, /export function pi0\(/);
+assert.match(generated, /export function pu0\(/);
 assert.match(generated, /export function s0\(/);
 assert.match(generated, /export function m0\(/);
 assert.match(generated, /const defaultTotal: u32/);

@@ -26,7 +26,8 @@ access, mutation, class methods, and `instanceof`.
 
 > **Status:** early and intentionally versioned `0.0.0`. Install directly from
 > GitHub while the API and packaging settle. Node.js is the primary target; the
-> generated artifact currently requires Wasm SIMD and bulk memory.
+> generated artifact uses the portable SWAR tier and bulk memory by default;
+> Wasm SIMD is an explicit compile-time tier.
 
 <details>
 <summary>Table of Contents</summary>
@@ -160,6 +161,7 @@ Options live directly on the `json-ty/transform` plugin entry:
         "transform": "json-ty/transform",
         "generatedDirectory": ".json-ty",
         "cacheDirectory": ".json-ty/cache",
+        "kernelTier": "swar",
         "optimizeLevel": 3,
         "shrinkLevel": 0
       }
@@ -172,6 +174,7 @@ Options live directly on the `json-ty/transform` plugin entry:
 |---|---|---|
 | `generatedDirectory` | `.json-ty` | AssemblyScript, Wasm, layouts, manifest, and host bindings |
 | `cacheDirectory` | `<generatedDirectory>/cache` | Content-addressed compiled Wasm cache |
+| `kernelTier` | `swar` | Compile-time kernel family: `naive`, `swar`, or `simd` |
 | `optimizeLevel` | `3` | AssemblyScript/Binaryen optimization level, from `0` to `3` |
 | `shrinkLevel` | `0` | Binaryen size-optimization level, from `0` to `2` |
 | `runtimeModuleSpecifier` | generated relative path | Advanced override for the injected runtime import |
@@ -513,9 +516,9 @@ Node/Wasm byte boundary:
 
 | Payload | Native parse | Typed Buffer parse | Ratio | Resident string parse |
 |---|---:|---:|---:|---:|
-| Small | 329 MB/s | 833 MB/s | 2.53x | 1,010 MB/s |
-| Medium | 379 MB/s | 1,391 MB/s | 3.67x | 1,514 MB/s |
-| Large | 641 MB/s | 2,646 MB/s | 4.13x | 2,914 MB/s |
+| Small | 364 MB/s | 546 MB/s | 1.50x | 723 MB/s |
+| Medium | 392 MB/s | 1,546 MB/s | 3.94x | 1,764 MB/s |
+| Large | 694 MB/s | 2,749 MB/s | 3.96x | 3,059 MB/s |
 
 <img src="./benchmark/charts/overview-deserialize.svg" alt="json-ty overview deserialization throughput">
 
@@ -528,11 +531,24 @@ never put on a log10 scale.
 ### json-as parity
 
 The direct SIMD comparison runs json-ty and the sibling json-as artifacts on
-the same payloads and process. The current resident-kernel gate passes all 12
-parse/serialize rows at the required 0.90x floor:
+the same payloads and process. Its parse kernel consumes resident caller-owned
+bytes and writes into a caller-owned bounded document span; the separately
+reported owning path retains the convenient allocate-and-copy lifecycle. The
+current resident-kernel gate passes all 12 parse/serialize rows at the required
+1.50x floor:
 
-- parsing: 1.09x–2.02x json-as across the checked schemas;
-- serialization: 2.16x–94.52x on unchanged verified documents.
+- parsing: 1.56x–3.48x json-as across the checked schemas;
+- serialization: 2.56x–98.91x on unchanged verified documents.
+
+<img src="./benchmark/charts/json-as-parity-parse.svg" alt="json-ty and json-as deserialization throughput">
+
+<img src="./benchmark/charts/json-as-parity-serialize.svg" alt="json-ty and json-as serialization throughput">
+
+`RawNodeBinding.parseInto(schema, source, length, output, capacity)` exposes
+the validating low-level contract. `{ trusted: true }` additionally asserts
+that the caller has already validated canonical JSON and UTF-8, enabling the
+fastest SWAR/SIMD boundary scans. Input and output must not overlap and must
+remain reserved and alive for the document lifetime.
 
 The very large serialization ratios are the intended retained-document path:
 the first write is generated and byte-verified; later unchanged writes may copy
@@ -540,8 +556,16 @@ the proven canonical source. Mutations invalidate that state.
 
 Performance depends heavily on payload shape and access pattern. Plain tiny
 objects, fully materialized lazy documents, and dynamic JSON can favor native
-V8. The runtime deliberately routes ordinary objects through native or
-generated JavaScript when flattening them into Wasm would lose.
+V8. `parseDynamic(input, { plain: true })` deliberately uses the host JSON
+backend because copying a completed Wasm graph into ordinary host objects adds
+an unavoidable second allocation pass. Byte inputs still receive fatal UTF-8
+validation. `parseDynamic(bytes, { eager: true, validate: true })` instead
+constructs the complete queryable flat-memory graph in one Wasm pass; the
+default dynamic path retains validated nested spans until access. Validation
+is mandatory and enabled by default—`validate: false` and trusted-byte bypasses
+are unsupported. Typed views, lazy views, `JSON.Obj`, and raw-byte output remain
+Wasm-backed; generated JavaScript handles ordinary-object serialization when
+flattening it into Wasm would lose.
 
 Run the suites locally:
 
@@ -550,7 +574,28 @@ npm run bench:overview
 npm run bench:parity
 npm run bench:lazy
 npm run bench:classic
+npm run bench:classic:v8       # resident d8 loops with anti-elision sinks
+npm run bench:tiers          # full naive/SWAR/SIMD report
+npm run bench:tiers:smoke    # abbreviated cross-tier report
+npm run bench:all            # full tiers, kernel microbenches, and all charts
+npm run test:rfc-oracle      # all 318 JSONTestSuite cases, all tiers
 ```
+
+The resident V8 classic gate now passes every corpus against both built-in JS
+and the fastest sibling json-as SIMD mode. Validated, queryable `JSON.Obj`
+parsing is 2.14–5.11× `JSON.parse`; typed-lazy and exact raw-projection paths
+put the best semantic result at 1.51–3.15× json-as. Retained-source
+serialization is 24.59–149.01× `JSON.stringify` and 2.46–5.86× json-as.
+Validation-only scanner figures remain separately labeled and are not used to
+satisfy the semantic parity gate.
+
+<img src="./benchmark/charts/classic-v8-deserialize.svg" alt="Resident V8 classic deserialization relative to JSON.parse">
+
+<img src="./benchmark/charts/classic-v8-serialize.svg" alt="Resident V8 classic serialization relative to JSON.stringify">
+
+Additional published charts cover the complete classic corpus, lazy access
+patterns, raw API paths, tier execution, compile time, Wasm size, and RFC
+coverage under [`benchmark/charts`](./benchmark/charts).
 
 Results and methodology live in [bench/README.md](./bench/README.md) and
 [benchmark/results/core-port-2026-07-18.md](./benchmark/results/core-port-2026-07-18.md).
@@ -572,7 +617,7 @@ Build compatibility:
 - Native TypeScript 7 is not currently supported because it has no compatible
   synchronous source-transformer API.
 - `json-ty/transform` options include `generatedDirectory`, `cacheDirectory`,
-  `runtimeModuleSpecifier`, `optimizeLevel`, and `shrinkLevel`. Relative paths
+  `runtimeModuleSpecifier`, `kernelTier`, `optimizeLevel`, and `shrinkLevel`. Relative paths
   are resolved from the owning `tsconfig.json`.
 
 Deliberately outside the current basic contract:
@@ -580,7 +625,7 @@ Deliberately outside the current basic contract:
 - revivers, replacers, and pretty-print spacing;
 - unconstrained `any`, functions, symbols, index signatures, and untagged unions;
 - dedicated Date, Map, Set, typed-binary, and arbitrary custom-Wasm codecs;
-- CommonJS packaging and a packaged no-SIMD artifact.
+- CommonJS packaging and precompiled application-independent Wasm artifacts.
 
 See [FEATURE_MATRIX.md](./FEATURE_MATRIX.md) for the exact support matrix.
 
@@ -611,8 +656,8 @@ Common failures:
   `strictPropertyInitialization`.
 - **Call was not optimized:** use an explicit type argument:
   `JSON.parse<MyType>(input)`.
-- **Wasm fails to compile:** the generated build currently requires SIMD and
-  bulk-memory support.
+- **Wasm fails to compile:** generated builds require bulk-memory support;
+  choose `kernelTier: "simd"` only on runtimes with Wasm SIMD.
 - **Deployment cannot find runtime.wasm:** ship the generated `.json-ty/`
   runtime artifacts beside the emitted application layout; only `cache/` is
   disposable.
@@ -652,10 +697,11 @@ npm run test:all
 npm run bench:parity
 ```
 
-The release gate includes raw ABI/import checks, Node and browser bindings, RFC
-and JSONTestSuite cases, generated-project integration, wide schemas,
-multiword bitmaps, SIMD and scalar differential fuzzing, number/string edge
-cases, mutation, lifetime safety, and build-cache determinism.
+The release gate includes raw ABI/import checks, Node and browser bindings, all
+318 pinned JSONTestSuite parsing fixtures through typed and dynamic APIs,
+generated-project integration, wide schemas, multiword bitmaps, naive/SWAR/SIMD
+differential checks, number/string edge cases, mutation, lifetime safety, and
+build-cache determinism.
 
 ## Contributing
 
@@ -664,7 +710,7 @@ coverage, host-boundary improvements, and benchmark-backed kernel work.
 
 Please read [CONTRIBUTING.md](./CONTRIBUTING.md) and
 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md). Performance changes should include
-before/after numbers and must keep the scalar/SIMD differential suites green.
+before/after numbers and must keep the naive/SWAR/SIMD differential suites green.
 
 Contributors are recognized in [CONTRIBUTORS.md](./CONTRIBUTORS.md).
 
@@ -673,7 +719,8 @@ Contributors are recognized in [CONTRIBUTORS.md](./CONTRIBUTORS.md).
 `json-ty` is a sibling of [json-as](https://github.com/JairusSW/json-as). It
 adapts json-as's schema-specialization, SIMD/SWAR scanning, default, numeric,
 string, and serializer ideas to a raw UTF-8 ABI and a flat host-readable memory
-model. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for provenance.
+model. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) and the
+[pinned source inventory](./assembly/JSON_AS_UPSTREAM.md) for provenance.
 
 It is built with [AssemblyScript](https://www.assemblyscript.org/) and uses
 [xjb-as](https://www.npmjs.com/package/xjb-as) for the shortest binary64 writer.

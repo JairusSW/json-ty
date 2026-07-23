@@ -44,7 +44,7 @@ identity with `json-as` or the JavaScript standard library.
 | arbitrary custom codecs in Wasm | not implemented | unsupported decorators fall through unchanged |
 | untagged unions/index signatures/any | deliberately rejected | use dynamic JSON |
 | reviver/replacer/pretty printing | out of scope | basic API only |
-| scalar/SWAR no-SIMD build | correctness-tested | not packaged; default artifact requires SIMD |
+| naive/SWAR no-SIMD builds | default + correctness-tested | SWAR is default; naive is the RFC oracle; SIMD is explicit |
 | CommonJS artifact | not packaged | current package is ESM-first |
 
 Compared with `json-as`, the parser/writer kernels retain the important SIMD,

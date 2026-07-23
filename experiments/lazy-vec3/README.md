@@ -3,7 +3,7 @@
 A minimal end-to-end implementation of [../PROTOCOL.md](../PROTOCOL.md) for one
 schema: `Vec3 = { "x": number, "y": number, "z": number }`.
 
-- `assembly/vec3.ts` — JSON stays as UTF-8 in linear memory (`SRC`). `scan(len)`
+- `assembly/experiments/lazy-vec3/vec3.ts` — JSON stays as UTF-8 in linear memory (`SRC`). `scan(len)`
   does a schema-directed pass (find `x`/`y`/`z`) and writes a 16-byte header +
   three u64 slot words (compact `Raw` spans). Built `--runtime stub`; scan
   allocates nothing.
@@ -14,7 +14,7 @@ schema: `Vec3 = { "x": number, "y": number, "z": number }`.
   number from the source span on first access (memoized).
 
 ```bash
-npx asc experiments/lazy-vec3/assembly/vec3.ts \
+npx asc assembly/experiments/lazy-vec3/vec3.ts \
   --outFile experiments/lazy-vec3/build/vec3.wasm \
   -O3 --noAssert --bindings raw --runtime stub --exportRuntime
 node experiments/lazy-vec3/vec3.mjs

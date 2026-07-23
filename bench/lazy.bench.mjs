@@ -4,6 +4,7 @@ import { RawNodeBinding, createSchemaRegistry } from "../src/raw/node-binding.js
 import { parityPayloads } from "./parity/payloads.mjs";
 
 const targetMs = Math.max(50, Number(process.env.JSON_TY_LAZY_BENCH_MS ?? 250));
+const tierMetadata = JSON.parse(readFileSync("build/parity/kernel-tier.json", "utf8"));
 
 function measure(bytes, operation) {
   let iterations = 1;
@@ -60,4 +61,4 @@ for (const payload of parityPayloads.filter(({ key }) => key !== "vec3")) {
 }
 
 mkdirSync("build/logs", { recursive: true });
-writeFileSync("build/logs/lazy.json", JSON.stringify({ generatedAt: new Date().toISOString(), rows }, null, 2));
+writeFileSync("build/logs/lazy.json", JSON.stringify({ generatedAt: new Date().toISOString(), tierMetadata, rows }, null, 2));

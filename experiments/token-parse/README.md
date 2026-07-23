@@ -3,7 +3,7 @@
 A more general alternative to the schema-directed slot scan in
 [../lazy-vec3](../lazy-vec3). Two stages, simdjson-style:
 
-1. **`assembly/tokenizer.ts`** — SIMD structural tokenizer (ported from
+1. **`assembly/experiments/token-parse/tokenizer.ts`** — SIMD structural tokenizer (ported from
    [../simd-string](../simd-string)). For each 16-byte block it `v128`-masks the
    structural bytes (`{ } [ ] : ,`) and quotes; numbers/whitespace/words between
    them are bulk-skipped. Emits a **token stream**: the byte offset of every
@@ -14,7 +14,7 @@ A more general alternative to the schema-directed slot scan in
    materialize numbers lazily on getter access.
 
 ```bash
-npx asc experiments/token-parse/assembly/tokenizer.ts \
+npx asc assembly/experiments/token-parse/tokenizer.ts \
   --outFile experiments/token-parse/build/tokenizer.wasm \
   -O3 --noAssert --bindings raw --runtime stub --exportRuntime --enable simd
 node experiments/token-parse/vec3.mjs

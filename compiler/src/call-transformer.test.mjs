@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import ts from "typescript";
-import { createProgramFromConfig } from "../lib/program-analyzer.js";
-import { createJsonTyTransformer } from "../lib/call-transformer.js";
+import { createProgramFromConfig } from "../../dist/compiler/program-analyzer.js";
+import { createJsonTyTransformer } from "../../dist/compiler/call-transformer.js";
 
 const program = createProgramFromConfig("compiler/fixtures/tsconfig.json");
 const source = program.getSourceFiles().find((file) => file.fileName.endsWith("analyzer.ts"));

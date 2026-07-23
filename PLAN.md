@@ -651,7 +651,7 @@ No kernel returns or accepts an AssemblyScript standard-library value.
 Implemented organization:
 
 ```text
-src/raw/assembly
+assembly
 ├── deserialize/{scanner,null,boolean,number,string,array,struct,dynamic}.ts
 ├── serialize/{writer,boolean,number,string,array,struct,dynamic}.ts
 ├── layout/{document,record,array,dynamic}.ts

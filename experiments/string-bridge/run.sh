@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-npx asc experiments/string-bridge/assembly/bridge.ts \
+npx asc assembly/experiments/string-bridge/bridge.ts \
   --outFile experiments/string-bridge/build/bridge.wasm \
   --optimizeLevel 3 --shrinkLevel 0 --noAssert \
   --bindings raw --runtime stub --exportRuntime \

@@ -6,7 +6,7 @@
     "strict": true,
     "types": ["node"],
     "declaration": true,
-    "outDir": "lib",
+    "outDir": "../dist/compiler",
     "rootDir": "src",
     "skipLibCheck": true
   },

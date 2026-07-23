@@ -4,6 +4,7 @@ import { RawNodeBinding, createSchemaRegistry } from "../src/raw/node-binding.js
 import { payloads } from "./overview/payloads.mjs";
 
 const wasm = readFileSync("build/overview/runtime.wasm");
+const tierMetadata = JSON.parse(readFileSync("build/overview/kernel-tier.json", "utf8"));
 const layouts = JSON.parse(readFileSync("build/overview/schema-layouts.json", "utf8"));
 const schemas = createSchemaRegistry(layouts);
 const runtime = new RawNodeBinding(wasm, { scratchCapacity: 16 << 20, heapReserve: 64 << 20 });
@@ -81,7 +82,7 @@ function measure(payload, kind, series, description, operation) {
     elapsed: measuredMs,
     bytes: payload.bytes,
     operations,
-    features: ["utf8", "stub-runtime", "simd", "node-buffer"],
+    features: ["utf8", "stub-runtime", tierMetadata.kernelTier, "node-buffer"],
     mbps,
     gbps: mbps / 1000,
     opsPerSecond: operations / seconds,
@@ -171,5 +172,5 @@ for (const payload of selectedPayloads) {
 }
 
 mkdirSync("build/logs", { recursive: true });
-writeFileSync("build/logs/overview.json", JSON.stringify({ generatedAt: new Date().toISOString(), targetMs, sink, payloads: selectedPayloads.map(({ key, title, label, bytes }) => ({ key, title, label, bytes })), series: SERIES, results }, null, 2));
+writeFileSync("build/logs/overview.json", JSON.stringify({ generatedAt: new Date().toISOString(), tierMetadata, targetMs, sink, payloads: selectedPayloads.map(({ key, title, label, bytes }) => ({ key, title, label, bytes })), series: SERIES, results }, null, 2));
 console.log(`> build/logs/overview.json (${results.length} measurements, sink=${sink})`);

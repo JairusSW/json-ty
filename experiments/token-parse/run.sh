@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-npx asc experiments/token-parse/assembly/tokenizer.ts \
+npx asc assembly/experiments/token-parse/tokenizer.ts \
   --outFile experiments/token-parse/build/tokenizer.wasm \
   --optimizeLevel 3 --shrinkLevel 0 --noAssert \
   --bindings raw --runtime stub --exportRuntime --enable simd

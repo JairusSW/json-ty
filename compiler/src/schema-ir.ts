@@ -129,6 +129,8 @@ export interface SchemaAbi {
   index: number;
   parse: string;
   parseTrusted: string;
+  parseInto: string;
+  parseIntoTrusted: string;
   serialize: string;
   materialize?: string;
 }
@@ -199,7 +201,7 @@ export function layoutObject(schema: ObjectSchema): ObjectLayout {
         whitespace: fields.length !== 0,
         keyed: fields.length !== 0,
         slow: true,
-        ...(fields.length > 32 && fields.every((field) => field.kind === "number" || field.kind === "boolean" || field.kind === "string")
+        ...(fields.length > 32
           ? { chunkSize: 32 }
           : {}),
       },

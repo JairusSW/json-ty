@@ -5,14 +5,14 @@ Design rule: **non-string primitives are always eager.** A lazy span + JS-side
 parses numbers/bools/null during the scan and hands the actual value back; only
 strings stay lazy spans (string materialization is the 1.7 GB/s wall).
 
-- `assembly/eager.ts` — schema-directed scan that parses `x`/`y`/`z` to f64
+- `assembly/experiments/eager-vec3/eager.ts` — schema-directed scan that parses `x`/`y`/`z` to f64
   (Clinger fast-path `parseF64`, exact when mantissa ≤ 2⁵³ and |exp| ≤ 22) into a
   3-slot `f64` array. NaN = absent.
 - `vec3.mjs` — `Buffer.write` the JSON into WASM, `parseVec3`, read the three
   doubles directly from a `Float64Array` (no decode, no `parseFloat`).
 
 ```bash
-npx asc experiments/eager-vec3/assembly/eager.ts \
+npx asc assembly/experiments/eager-vec3/eager.ts \
   --outFile experiments/eager-vec3/build/eager.wasm \
   -O3 --noAssert --bindings raw --runtime stub --exportRuntime
 node experiments/eager-vec3/vec3.mjs

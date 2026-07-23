@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { analyzeProgram, createProgramFromConfig } from "../lib/program-analyzer.js";
+import { analyzeProgram, createProgramFromConfig } from "../../dist/compiler/program-analyzer.js";
 
 const program = createProgramFromConfig("compiler/fixtures/tsconfig.json");
 const first = analyzeProgram(program).manifest;

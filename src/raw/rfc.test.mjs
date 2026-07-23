@@ -17,12 +17,19 @@ for (const source of valid) {
   const view = binding.parseDynamic(source);
   assert.deepEqual(view.toJS(), expected, source);
   view.dispose();
+  const eager = binding.parseDynamic(new TextEncoder().encode(source), { eager: true });
+  assert.deepEqual(eager.toJS(), expected, `eager: ${source}`);
+  eager.dispose();
 }
 for (const source of invalid) {
   assert.throws(() => JSON.parse(source), undefined, `native fixture classification: ${source}`);
   assert.throws(() => binding.parseDynamic(source), SyntaxError, source);
 }
 
-for (const malformedUtf8 of [Uint8Array.of(0x22, 0xc0, 0xaf, 0x22), Uint8Array.of(0x22, 0xed, 0xa0, 0x80, 0x22), Uint8Array.of(0x22, 0xf4, 0x90, 0x80, 0x80, 0x22), Uint8Array.of(0x5b, 0xe2, 0x82, 0x5d)]) assert.throws(() => binding.parseDynamic(malformedUtf8), SyntaxError);
+for (const malformedUtf8 of [Uint8Array.of(0x22, 0xc0, 0xaf, 0x22), Uint8Array.of(0x22, 0xed, 0xa0, 0x80, 0x22), Uint8Array.of(0x22, 0xf4, 0x90, 0x80, 0x80, 0x22), Uint8Array.of(0x5b, 0xe2, 0x82, 0x5d)]) {
+  assert.throws(() => binding.parseDynamic(malformedUtf8), SyntaxError);
+  assert.throws(() => binding.parseDynamic(malformedUtf8, { eager: true }), SyntaxError);
+  assert.throws(() => binding.parseDynamic(malformedUtf8, { plain: true }), SyntaxError);
+}
 
 console.log("raw RFC/JSONTestSuite matrix: all cases passed");

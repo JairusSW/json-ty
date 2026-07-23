@@ -5,6 +5,18 @@ import { ChartJSNodeCanvas } from "chartjs-node-canvas";
 import { INK, OVERVIEW_BARS } from "./palette.mjs";
 import { withAdaptiveLogScale } from "./chart-outliers.mjs";
 
+const WHITE_BACKGROUND = {
+  id: "whiteBackground",
+  beforeDraw(chart) {
+    const { ctx, width, height } = chart;
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-over";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  },
+};
+
 function git(...args) {
   try {
     return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -95,6 +107,7 @@ function render(config, outfile) {
   });
   const rendered = withAdaptiveLogScale({
     ...config,
+    plugins: [...(config.plugins ?? []), WHITE_BACKGROUND],
     options: { ...config.options, devicePixelRatio: isSvg ? 1 : 3 },
   });
   const buffer = canvas.renderToBufferSync(rendered, isSvg ? "image/svg+xml" : "image/png");
