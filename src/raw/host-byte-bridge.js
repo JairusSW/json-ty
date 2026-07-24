@@ -11,11 +11,21 @@ export function createTextHostByteCodec() {
   const decoder = new TextDecoder();
   const asciiDecoder = new TextDecoder("ascii");
   const fatalDecoder = new TextDecoder("utf-8", { fatal: true });
+  let lastTarget = null;
+  let lastOffset = 0;
+  let lastCapacity = 0;
+  let lastDestination = null;
   return {
     memoryView: () => null,
     byteLength: (value) => encoder.encode(value).byteLength,
     write(value, target, offset, capacity) {
-      const result = encoder.encodeInto(value, target.subarray(offset, offset + capacity));
+      if (target !== lastTarget || offset !== lastOffset || capacity !== lastCapacity) {
+        lastTarget = target;
+        lastOffset = offset;
+        lastCapacity = capacity;
+        lastDestination = target.subarray(offset, offset + capacity);
+      }
+      const result = encoder.encodeInto(value, lastDestination);
       if (result.read !== value.length) throw new RangeError("UTF-8 destination capacity was exhausted");
       return result.written;
     },

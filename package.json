@@ -157,7 +157,7 @@
     "build:compiler": "tsc -p ./compiler",
     "build:project": "npm run build:compiler && node ./dist/compiler/cli.js",
     "build:raw": "npm run build:compiler && node ./scripts/build-raw-runtime.mjs",
-    "test:raw": "npm run build:typescript && npm run build:raw && node ./src/raw/wasm-contract.test.mjs && node ./src/raw/node-binding.test.mjs && node ./src/raw/browser-binding.test.mjs && node ./src/raw/rfc.test.mjs",
+    "test:raw": "npm run build:typescript && npm run build:raw && node ./src/raw/wasm-contract.test.mjs && node ./src/raw/node-binding.test.mjs && node ./src/raw/browser-binding.test.mjs && node ./src/raw/bufferless-binding.test.mjs && node ./src/raw/rfc.test.mjs",
     "test:rfc-oracle": "npm run build:compiler && npm run test:rfc-oracle:naive && npm run test:rfc-oracle:swar && npm run test:rfc-oracle:simd",
     "test:rfc-oracle:naive": "JSON_TY_KERNEL_TIER=naive node ./scripts/build-rfc-oracle-runtime.mjs && JSON_TY_KERNEL_TIER=naive node ./src/raw/rfc-oracle.test.mjs",
     "test:rfc-oracle:swar": "JSON_TY_KERNEL_TIER=swar node ./scripts/build-rfc-oracle-runtime.mjs && JSON_TY_KERNEL_TIER=swar node ./src/raw/rfc-oracle.test.mjs",
