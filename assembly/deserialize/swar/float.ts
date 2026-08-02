@@ -7,6 +7,7 @@
 
 import { parse4Digits } from "../digits";
 import { eiselLemire22 } from "../../eisel-lemire";
+import { parse8Digits_SWAR } from "../../util/swar-int";
 
 @external("env", "parseNumberSlow")
 declare function parseNumberSlow(pointer: u32, length: u32): f64;
@@ -34,8 +35,9 @@ function deserializeFloat(
   start: usize,
   end: usize,
   destination: usize,
-  packed: bool,
+  packedWidth: u8,
 ): usize {
+  const packed = packedWidth != 0;
   // A positive four-digit integer is common in compact record identifiers.
   // Validate and fold it in one load before entering the general decimal
   // state machine. A following digit, fraction, or exponent deliberately
@@ -74,9 +76,33 @@ function deserializeFloat(
   let mantissaDigits: i32 = 0;
   let discardedDigits: i32 = 0;
   let significant = false;
+  let seededInteger8 = false;
+
+  // simdjson checks and folds eight digits in one u64 load. Unlike a probe
+  // that restarts at '.', retain the folded prefix for fractional/exponent
+  // parsing as well.
+  if (packedWidth == 8 && end - pointer >= 8 && load<u8>(pointer) >= 0x31 && load<u8>(pointer) <= 0x39) {
+    const integer8 = parse8Digits_SWAR(load<u64>(pointer));
+    if (integer8 != U32.MAX_VALUE) {
+      const next = pointer + 8;
+      if (next >= end || (!isDigit(load<u8>(next)) && load<u8>(next) != 0x2e && load<u8>(next) != 0x65 && load<u8>(next) != 0x45)) {
+        store<f64>(destination, negative ? -<f64>integer8 : <f64>integer8);
+        return next;
+      }
+      if (next < end && (load<u8>(next) == 0x2e || load<u8>(next) == 0x65 || load<u8>(next) == 0x45)) {
+        mantissa = integer8;
+        mantissaDigits = 8;
+        significant = integer8 != 0;
+        pointer = next;
+        seededInteger8 = true;
+      }
+    }
+  }
 
   let value = load<u8>(pointer);
-  if (value == 0x30) {
+  if (seededInteger8) {
+    // Prefix state was populated by the packed probe above.
+  } else if (value == 0x30) {
     pointer++;
     if (pointer < end && isDigit(load<u8>(pointer))) return 0;
   } else {
@@ -132,6 +158,16 @@ function deserializeFloat(
     if (pointer >= end || !isDigit(load<u8>(pointer))) return 0;
 
     while (pointer < end && isDigit(load<u8>(pointer))) {
+      if (packedWidth == 8 && significant && mantissaDigits <= 11 && end - pointer >= 8) {
+        const packed8 = parse8Digits_SWAR(load<u64>(pointer));
+        if (packed8 != U32.MAX_VALUE) {
+          mantissa = mantissa * 100_000_000 + packed8;
+          mantissaDigits += 8;
+          fractionalDigits += 8;
+          pointer += 8;
+          continue;
+        }
+      }
       if (
         packed &&
         significant &&
@@ -222,7 +258,17 @@ export function deserializeFloat_SWAR(
   end: usize,
   destination: usize,
 ): usize {
-  return deserializeFloat(start, end, destination, true);
+  return deserializeFloat(start, end, destination, 8);
+}
+
+/** Previous four-digit packed variant retained for head-to-head benchmarks. */
+@inline
+export function deserializeFloatPacked4(
+  start: usize,
+  end: usize,
+  destination: usize,
+): usize {
+  return deserializeFloat(start, end, destination, 4);
 }
 
 @inline
@@ -231,5 +277,5 @@ export function deserializeFloatScalar(
   end: usize,
   destination: usize,
 ): usize {
-  return deserializeFloat(start, end, destination, false);
+  return deserializeFloat(start, end, destination, 0);
 }

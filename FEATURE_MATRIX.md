@@ -18,9 +18,10 @@ identity with the JavaScript standard library.
 | recursive records | implemented | generated depth guard |
 | discriminated unions | implemented | shared literal discriminator required |
 | `JSON.Array<T>` | implemented | zero-copy facade with indexed overlay |
-| `JSON.Value`/`Obj`/`Arr` | implemented | eager tagged graph by default; retained spans require `eager: false` |
-| `JSON.Raw` | implemented on host paths | validated raw insertion; typed `@raw` routes host-side |
-| boxed primitives | implemented on host dynamic path | native-compatible unboxing |
+| `JSON.Value`/`Obj`/`Arr` | implemented | eager tagged graph by default; retained spans require `eager: false`; read-only views materialize once on first mutation; native array/object helpers and parse reuse |
+| `JSON.Raw` | implemented | validated raw insertion and exact span pass-through |
+| `JSON.Box<T>` | implemented | nullable primitive roots, fields, arrays, and helpers |
+| `JSON.internal` | implemented | host-safe nested parse/stringify aliases |
 | UTF-8 and Unicode validation | implemented | lone-surrogate compatibility bridge for JS strings |
 | shortest correctly rounded numbers | implemented | packed UTF-8 fractions, Clinger, Eisel–Lemire, exact host fallback; direct integer output |
 | SIMD classification | implemented | scalar boundary validation remains authoritative |
@@ -38,11 +39,12 @@ identity with the JavaScript standard library.
 | generated JS writer | implemented | native-compatible values use V8/JavaScriptCore/SpiderMonkey JSON; primitive alias/omit projections are emitted as straight JS; compiler-produced complex decorators use a lazily compiled CSP-safe plan |
 | explicit document reuse/release | implemented | split/coalescing free list and stale-view protection |
 | portable runtime binding | implemented and cross-runtime tested | one ESM/Wasm artifact; bytes, module, response, URL, request, blob, and local file loading across web APIs, Deno, Bun, and Node |
-| Date | native host fallback | no dedicated Wasm policy yet |
-| Map/Set policies | not implemented | require an explicit representation policy |
-| typed-array/binary codecs | not implemented | no implicit JSON representation selected |
-| arbitrary custom codecs in Wasm | not implemented | unsupported decorators fall through unchanged |
-| untagged unions/index signatures/any | deliberately rejected | use dynamic JSON |
+| Date | implemented | ISO-8601 string policy, validated and lazily host-materialized |
+| Map/Set policies | implemented | maps use JSON objects and sets use arrays; recursive element codecs |
+| typed-array/binary codecs | implemented | typed arrays use numeric arrays; ArrayBuffer uses a byte array |
+| custom `@serializer`/`@deserializer` | implemented | shape-checked raw JSON hook boundary; class constructors are registered explicitly by transformed modules |
+| arbitrary `any`/`unknown` | implemented | validated raw span with host materialization |
+| untagged unions/index signatures | deliberately rejected | use dynamic JSON |
 | reviver/replacer/pretty printing | out of scope | basic API only |
 | naive/SWAR no-SIMD builds | default + correctness-tested | SWAR is default; naive is the RFC oracle; SIMD is explicit |
 | CommonJS artifact | not packaged | current package is ESM-first |

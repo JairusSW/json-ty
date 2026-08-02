@@ -1,0 +1,22 @@
+type bool = boolean;
+type i8 = number;
+type i16 = number;
+type i32 = number;
+type i64 = number;
+type u8 = number;
+type u16 = number;
+type u32 = number;
+type u64 = number;
+type f32 = number;
+type f64 = number;
+
+declare const i8: { readonly MIN_VALUE: -128; readonly MAX_VALUE: 127 };
+declare const i16: { readonly MIN_VALUE: -32768; readonly MAX_VALUE: 32767 };
+declare const i32: { readonly MIN_VALUE: -2147483648; readonly MAX_VALUE: 2147483647 };
+declare const i64: { readonly MIN_VALUE: -9007199254740991; readonly MAX_VALUE: 9007199254740991 };
+declare const u8: { readonly MIN_VALUE: 0; readonly MAX_VALUE: 255 };
+declare const u16: { readonly MIN_VALUE: 0; readonly MAX_VALUE: 65535 };
+declare const u32: { readonly MIN_VALUE: 0; readonly MAX_VALUE: 4294967295 };
+declare const u64: { readonly MIN_VALUE: 0; readonly MAX_VALUE: 9007199254740991 };
+declare const f32: typeof Number;
+declare const f64: typeof Number;

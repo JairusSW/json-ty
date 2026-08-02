@@ -1,0 +1,360 @@
+import { JSON, json, alias, omit, omitnull, optional, lazy, eager, raw, omitif, codec, serializer, deserializer } from "json-ty";
+import { describe, expect } from "./harness.js";
+
+describe("Should serialize integer sets", () => {
+  const set1 = new Set<u32>();
+  set1.add(0);
+  set1.add(100);
+  set1.add(101);
+  expect(JSON.stringify(set1)).toBe("[0,100,101]");
+
+  const set2 = new Set<i32>();
+  set2.add(0);
+  set2.add(100);
+  set2.add(-100);
+  expect(JSON.stringify(set2)).toBe("[0,100,-100]");
+});
+
+describe("Should serialize float sets", () => {
+  const set1 = new Set<f64>();
+  set1.add(7.23);
+  set1.add(1000.0);
+  set1.add(0.0);
+  expect(JSON.stringify(set1)).toBe("[7.23,1000,0]");
+
+  const set2 = new Set<f32>();
+  set2.add(-1.5);
+  set2.add(0.25);
+  set2.add(3.75);
+  expect(JSON.stringify(set2)).toBe("[-1.5,0.25,3.75]");
+});
+
+describe("Should serialize boolean sets", () => {
+  const set1 = new Set<bool>();
+  set1.add(true);
+  set1.add(false);
+  expect(JSON.stringify(set1)).toBe("[true,false]");
+});
+
+describe("Should serialize string sets", () => {
+  const set1 = new Set<string>();
+  set1.add("hello");
+  set1.add("world");
+  expect(JSON.stringify(set1)).toBe('["hello","world"]');
+});
+
+describe("Should serialize empty sets", () => {
+  const set1 = new Set<i32>();
+  expect(JSON.stringify(set1)).toBe("[]");
+});
+
+describe("Should serialize and deserialize narrow integer sets", () => {
+  const u8s = new Set<u8>();
+  u8s.add(0);
+  u8s.add(7);
+  u8s.add(255);
+  expect(JSON.stringify(u8s)).toBe("[0,7,255]");
+  expect(JSON.stringify(JSON.parse<Set<u8>>("[0,7,255]"))).toBe("[0,7,255]");
+
+  const i8s = new Set<i8>();
+  i8s.add(-128);
+  i8s.add(0);
+  i8s.add(127);
+  expect(JSON.stringify(i8s)).toBe("[-128,0,127]");
+  expect(JSON.stringify(JSON.parse<Set<i8>>("[-128,0,127]"))).toBe(
+    "[-128,0,127]",
+  );
+
+  const u16s = JSON.parse<Set<u16>>("[0,42,65535]");
+  expect(u16s.has(65535)).toBe(true);
+  expect(JSON.stringify(u16s)).toBe("[0,42,65535]");
+
+  const i16s = JSON.parse<Set<i16>>("[-32768,0,32767]");
+  expect(i16s.has(-32768)).toBe(true);
+  expect(JSON.stringify(i16s)).toBe("[-32768,0,32767]");
+});
+
+describe("Should deserialize integer sets", () => {
+  const set1 = JSON.parse<Set<u32>>("[0,100,101]");
+  expect(set1.has(0)).toBe(true);
+  expect(set1.has(100)).toBe(true);
+  expect(set1.has(101)).toBe(true);
+  expect(set1.size).toBe(3);
+
+  const set2 = JSON.parse<Set<i32>>("[0,100,-100]");
+  expect(set2.has(0)).toBe(true);
+  expect(set2.has(100)).toBe(true);
+  expect(set2.has(-100)).toBe(true);
+  expect(set2.size).toBe(3);
+});
+
+describe("Should deserialize float sets", () => {
+  const set1 = JSON.parse<Set<f64>>("[7.23,1000.0,0.0]");
+  expect(set1.has(7.23)).toBe(true);
+  expect(set1.has(1000.0)).toBe(true);
+  expect(set1.has(0.0)).toBe(true);
+  expect(set1.size).toBe(3);
+
+  const set2 = JSON.parse<Set<f32>>("[-1.5,0.25,3.75]");
+  expect(set2.has(-1.5)).toBe(true);
+  expect(set2.has(0.25)).toBe(true);
+  expect(set2.has(3.75)).toBe(true);
+  expect(set2.size).toBe(3);
+});
+
+describe("Should deserialize boolean sets", () => {
+  const set1 = JSON.parse<Set<bool>>("[true,false]");
+  expect(set1.has(true)).toBe(true);
+  expect(set1.has(false)).toBe(true);
+  expect(set1.size).toBe(2);
+});
+
+describe("Should deserialize string sets", () => {
+  const set1 = JSON.parse<Set<string>>('["hello","world"]');
+  expect(set1.has("hello")).toBe(true);
+  expect(set1.has("world")).toBe(true);
+  expect(set1.size).toBe(2);
+});
+
+describe("Should deserialize empty sets", () => {
+  const set1 = JSON.parse<Set<i32>>("[]");
+  expect(set1.size).toBe(0);
+});
+
+describe("Should round-trip sets", () => {
+  const set1 = new Set<i32>();
+  set1.add(1);
+  set1.add(2);
+  set1.add(3);
+  const serialized = JSON.stringify(set1);
+  const deserialized = JSON.parse<Set<i32>>(serialized);
+  expect(deserialized.has(1)).toBe(true);
+  expect(deserialized.has(2)).toBe(true);
+  expect(deserialized.has(3)).toBe(true);
+  expect(deserialized.size).toBe(3);
+});
+
+describe("Should serialize object sets", () => {
+  const set1 = new Set<Vec3>();
+  set1.add({ x: 1.0, y: 2.0, z: 3.0 });
+  set1.add({ x: 4.0, y: 5.0, z: 6.0 });
+  const result = JSON.stringify(set1);
+  expect(result).toBe('[{"x":1,"y":2,"z":3},{"x":4,"y":5,"z":6}]');
+});
+
+
+@json
+class Vec3 {
+  x: f64 = 0.0;
+  y: f64 = 0.0;
+  z: f64 = 0.0;
+}
+
+
+@json
+class SetHolder {
+  smalls: Set<u8> = new Set<u8>();
+  labels: Set<string> = new Set<string>();
+  vectors: Set<Vec3> = new Set<Vec3>();
+}
+
+describe("Additional regression coverage - primitives and arrays", () => {
+  expect(JSON.stringify(JSON.parse<string>('"regression"'))).toBe(
+    '"regression"',
+  );
+  expect(JSON.stringify(JSON.parse<i32>("-42"))).toBe("-42");
+  expect(JSON.stringify(JSON.parse<bool>("false"))).toBe("false");
+  expect(JSON.stringify(JSON.parse<f64>("3.5"))).toBe("3.5");
+  expect(JSON.stringify(JSON.parse<i32[]>("[1,2,3,4]"))).toBe("[1,2,3,4]");
+  expect(JSON.stringify(JSON.parse<string[]>('["a","b","c"]'))).toBe(
+    '["a","b","c"]',
+  );
+});
+
+describe("Should deduplicate repeated set values", () => {
+  const set1 = JSON.parse<Set<i32>>("[1,1,2,2,3,3]");
+  expect(set1.size).toBe(3);
+  expect(set1.has(1)).toBe(true);
+  expect(set1.has(2)).toBe(true);
+  expect(set1.has(3)).toBe(true);
+});
+
+describe("Should deserialize and reserialize string sets", () => {
+  const set1 = JSON.parse<Set<string>>('["a","b","a"]');
+  expect(set1.size).toBe(2);
+  expect(JSON.stringify(set1)).toBe('["a","b"]');
+});
+
+describe("Should round-trip sets with whitespace and nested values", () => {
+  const ints = JSON.parse<Set<i32>>("[ 4 , 5 , 5 , 6 ]");
+  expect(ints.size).toBe(3);
+  expect(ints.has(4)).toBe(true);
+  expect(ints.has(5)).toBe(true);
+  expect(ints.has(6)).toBe(true);
+
+  const bools = JSON.parse<Set<bool>>("[ true , false , true , false ]");
+  expect(bools.size).toBe(2);
+  expect(JSON.stringify(bools)).toBe("[true,false]");
+});
+
+describe("Should handle nested raw set elements and malformed set input", () => {
+  const raws = JSON.parse<Set<JSON.Raw>>('[{"a":1},[2,3],"x",true,null]');
+  expect(raws.size).toBe(5);
+  const values = Array.from(raws.values());
+  expect(values[0].toString()).toBe('{"a":1}');
+  expect(values[1].toString()).toBe("[2,3]");
+  expect(values[2].toString()).toBe('"x"');
+  expect(values[3].toString()).toBe("true");
+  expect(values[4].toString()).toBe("null");
+});
+
+describe("Should parse sets with surrounding whitespace and mixed payloads", () => {
+  const strings = JSON.parse<Set<string>>(' [ "a" , "b" ] ');
+  expect(strings.size).toBe(2);
+  expect(strings.has("a")).toBe(true);
+  expect(strings.has("b")).toBe(true);
+
+  const floats = JSON.parse<Set<f64>>("[1.5,-2.25]");
+  expect(floats.has(1.5)).toBe(true);
+  expect(floats.has(-2.25)).toBe(true);
+
+  const raws = JSON.parse<Set<JSON.Raw>>('[{"a":1},[2,3],"z",null]');
+  const values = Array.from(raws.values());
+  expect(raws.size).toBe(4);
+  expect(values[0].toString()).toBe('{"a":1}');
+  expect(values[1].toString()).toBe("[2,3]");
+  expect(values[2].toString()).toBe('"z"');
+  expect(values[3].toString()).toBe("null");
+});
+
+describe("Should round-trip object sets through serialization boundaries", () => {
+  const set1 = new Set<Vec3>();
+  const a = new Vec3();
+  a.x = 1.0;
+  a.y = 2.0;
+  a.z = 3.0;
+  const b = new Vec3();
+  b.x = -4.0;
+  b.y = 5.5;
+  b.z = 6.0;
+  set1.add(a);
+  set1.add(b);
+  const out = JSON.stringify(set1);
+  expect(out).toBe('[{"x":1,"y":2,"z":3},{"x":-4,"y":5.5,"z":6}]');
+});
+
+describe("Should serialize single-item sets without trailing commas", () => {
+  const ints = new Set<i32>();
+  ints.add(42);
+  expect(JSON.stringify(ints)).toBe("[42]");
+
+  const floats = new Set<f32>();
+  floats.add(-0.5);
+  expect(JSON.stringify(floats)).toBe("[-0.5]");
+
+  const bools = new Set<bool>();
+  bools.add(true);
+  expect(JSON.stringify(bools)).toBe("[true]");
+
+  const strings = new Set<string>();
+  strings.add("x");
+  expect(JSON.stringify(strings)).toBe('["x"]');
+});
+
+describe("Should preserve JSON.internal behavior for primitive sets", () => {
+  const intSet = new Set<i32>();
+  intSet.add(1);
+  intSet.add(2);
+  intSet.add(3);
+
+  const floatSet = new Set<f32>();
+  floatSet.add(-1.5);
+  floatSet.add(0.25);
+  floatSet.add(3.75);
+
+  const boolSet = new Set<bool>();
+  boolSet.add(true);
+  boolSet.add(false);
+
+  const stringSet = new Set<string>();
+  stringSet.add("alpha");
+  stringSet.add("beta");
+
+  const ints = JSON.internal.stringify(intSet);
+  const floats = JSON.internal.stringify(floatSet);
+  const bools = JSON.internal.stringify(boolSet);
+  const strings = JSON.internal.stringify(stringSet);
+
+  expect(ints).toBe("[1,2,3]");
+  expect(floats).toBe("[-1.5,0.25,3.75]");
+  expect(bools).toBe("[true,false]");
+  expect(strings).toBe('["alpha","beta"]');
+
+  const parsedInts = JSON.internal.parse<Set<i32>>(ints);
+  const parsedFloats = JSON.internal.parse<Set<f32>>(floats);
+  const parsedBools = JSON.internal.parse<Set<bool>>(bools);
+  const parsedStrings = JSON.internal.parse<Set<string>>(strings);
+
+  expect(parsedInts.size).toBe(3);
+  expect(parsedFloats.has(-1.5)).toBe(true);
+  expect(parsedBools.has(false)).toBe(true);
+  expect(parsedStrings.has("beta")).toBe(true);
+});
+
+describe("Should deserialize set fields in @json classes", () => {
+  const parsed = JSON.parse<SetHolder>(
+    '{"smalls":[1,2,2,3],"labels":["a","b","a"],"vectors":[{"x":1,"y":2,"z":3}]}',
+  );
+  expect(parsed.smalls.size).toBe(3);
+  expect(parsed.smalls.has(3)).toBe(true);
+  expect(parsed.labels.size).toBe(2);
+  expect(parsed.labels.has("b")).toBe(true);
+  expect(parsed.vectors.size).toBe(1);
+  expect(JSON.stringify(parsed)).toBe(
+    '{"smalls":[1,2,3],"labels":["a","b"],"vectors":[{"x":1,"y":2,"z":3}]}',
+  );
+});
+
+describe("Extended regression coverage - nested and escaped payloads", () => {
+  expect(JSON.stringify(JSON.parse<i32>("0"))).toBe("0");
+  expect(JSON.stringify(JSON.parse<bool>("true"))).toBe("true");
+  expect(JSON.stringify(JSON.parse<f64>("-0.125"))).toBe("-0.125");
+  expect(JSON.stringify(JSON.parse<i32[][]>("[[1],[2,3],[]]"))).toBe(
+    "[[1],[2,3],[]]",
+  );
+  expect(JSON.stringify(JSON.parse<string>('"line\\nbreak"'))).toBe(
+    '"line\\nbreak"',
+  );
+});
+
+describe("Should round-trip raw sets with whitespace through JSON.parse", () => {
+  const rawSet = JSON.parse<Set<JSON.Raw>>('[ {"a":1} , [2,3] , "x" , false ]');
+  expect(rawSet.size).toBe(4);
+  // Host serialization does not retain insignificant whitespace outside a raw value.
+  expect(JSON.stringify(rawSet)).toBe('[{"a":1},[2,3],"x",false]');
+});
+
+// ─── Set serialization edge cases ────────────────────────────────────────────
+
+describe("Serialize: empty Set<i32>", () => {
+  expect(JSON.stringify(new Set<i32>())).toBe("[]");
+});
+
+describe("Serialize: Set<i64> with large value", () => {
+  const s = new Set<i64>();
+  s.add(9999999999999);
+  s.add(-9999999999999);
+  const out = JSON.stringify(s);
+  expect(out.includes("9999999999999")).toBe(true);
+});
+
+// serialize/naive/set.ts:13 Ternary FALSE: u64 set serialization
+// maxIntegerBytes<T>() at line 13 returns 40 (unsigned) for sizeof(T)==8.
+// The existing Set<i64> test already covers the signed (42) branch; this covers
+// the unsigned (40) FALSE branch via Set<u64>.
+describe("Serialize: Set<u64> covers naive/set.ts:13 Ternary false (unsigned 64-bit)", () => {
+  const s = new Set<u64>();
+  s.add(1);
+  const out = JSON.stringify(s);
+  expect(out).toBe("[1]");
+});

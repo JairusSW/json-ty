@@ -67,6 +67,8 @@ lazy.dispose();
 let dynamicParseCalls = 0;
 const parseDynamic = runtime._parseDynamic;
 const parseDynamicTrusted = runtime._parseDynamicTrusted;
+const parseDynamicRetained = runtime._parseDynamicRetained;
+const parseDynamicRetainedTrusted = runtime._parseDynamicRetainedTrusted;
 runtime._parseDynamic = (...arguments_) => {
   dynamicParseCalls++;
   return parseDynamic(...arguments_);
@@ -74,6 +76,14 @@ runtime._parseDynamic = (...arguments_) => {
 runtime._parseDynamicTrusted = (...arguments_) => {
   dynamicParseCalls++;
   return parseDynamicTrusted(...arguments_);
+};
+runtime._parseDynamicRetained = (...arguments_) => {
+  dynamicParseCalls++;
+  return parseDynamicRetained(...arguments_);
+};
+runtime._parseDynamicRetainedTrusted = (...arguments_) => {
+  dynamicParseCalls++;
+  return parseDynamicRetainedTrusted(...arguments_);
 };
 const dynamic = runtime.parseDynamic('{"items":[1,true,"x"]}');
 assert.equal(dynamicParseCalls, 1, "dynamic parse must cross into Wasm exactly once");

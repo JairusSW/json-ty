@@ -14,7 +14,22 @@ export interface UnionTypeRef {
   discriminator: string;
   variants: Array<{ typeName: string; discriminatorValue: string | number | boolean }>;
 }
-export type FieldTypeRef = PrimitiveTypeRef | ObjectTypeRef | ArrayTypeRef | UnionTypeRef;
+export type HostCodec =
+  | { kind: "date" }
+  | { kind: "map"; key: FieldTypeRef; value: FieldTypeRef }
+  | { kind: "set"; element: FieldTypeRef }
+  | { kind: "typed-array"; name: string }
+  | { kind: "array-buffer" }
+  | { kind: "box"; value: FieldTypeRef }
+  | { kind: "raw" }
+  | { kind: "dynamic"; facade: "value" | "object" | "array" }
+  | { kind: "custom"; typeName: string; serializer: string; deserializer: string; shape: "any" | "string" | "number" | "object" | "array" | "boolean" | "null" }
+  | { kind: "arbitrary" };
+export interface HostTypeRef {
+  kind: "host";
+  codec: HostCodec;
+}
+export type FieldTypeRef = PrimitiveTypeRef | ObjectTypeRef | ArrayTypeRef | UnionTypeRef | HostTypeRef;
 export type JsonDefault = string | number | boolean | null | JsonDefault[] | { readonly [key: string]: JsonDefault };
 
 export interface FieldDecorators {
@@ -108,6 +123,7 @@ export class RawNodeBinding {
   /** Builds the complete graph eagerly unless `eager: false` explicitly selects retained spans. */
   parseDynamic(input: string | Uint8Array, options?: { plain?: false; eager?: boolean; validate?: true }): DynamicValueView;
   parseDynamic(input: string | Uint8Array, options: { plain: true }): unknown;
+  parseDynamic<T extends DynamicValueView | HostDynamicValue>(input: string | Uint8Array, out: T): T;
   stringifyDynamic(value: DynamicValueView | unknown): string | undefined;
   echo(input: string | Uint8Array): string;
   release(pointer: number): void;
@@ -127,12 +143,24 @@ export class DynamicValueView {
   readonly type: "null" | "boolean" | "number" | "string" | "array" | "object" | "invalid";
   readonly value: unknown;
   toJS(): unknown;
+  get<T>(): T;
+  as<T>(): T;
+  asBox(): unknown;
   stringify(): string;
+  toString(): string;
   dispose(): void;
 }
 export class DynamicArrayView extends DynamicValueView implements Iterable<DynamicValueView> {
-  readonly length: number;
+  length: number;
   at(index: number): DynamicValueView | undefined;
+  getAs(index: number): DynamicValueView;
+  set(index: number, value: unknown): this;
+  push(...values: unknown[]): number;
+  pop(): DynamicValueView | undefined;
+  shift(): DynamicValueView | undefined;
+  unshift(...values: unknown[]): number;
+  clear(): this;
+  reverse(): this;
   values(): IterableIterator<DynamicValueView>;
   [Symbol.iterator](): IterableIterator<DynamicValueView>;
   toArray(): unknown[];
@@ -140,11 +168,18 @@ export class DynamicArrayView extends DynamicValueView implements Iterable<Dynam
 export class DynamicObjectView extends DynamicValueView {
   readonly size: number;
   get(key: string): DynamicValueView | undefined;
+  getAs(key: string): DynamicValueView;
+  set(key: string, value: unknown): this;
+  delete(key: string): boolean;
+  clear(): this;
   has(key: string): boolean;
   keys(): IterableIterator<string>;
   entries(): IterableIterator<[string, DynamicValueView]>;
   toObject(): Record<string, unknown>;
 }
+export class HostDynamicValue extends DynamicValueView {}
+export class HostDynamicArray extends DynamicArrayView {}
+export class HostDynamicObject extends DynamicObjectView {}
 
 export function createObjectView<T extends object>(schema: Omit<SchemaLayout<T>, "View">, classPrototype?: object): SchemaLayout<T>["View"];
 export function bindSchemaClass<T extends object>(schema: SchemaLayout<T>, constructor: abstract new (...arguments_: never[]) => T): SchemaLayout<T>;

@@ -7,7 +7,8 @@ export type ParseFailureKind =
   | "string"
   | "object"
   | "array"
-  | "union";
+  | "union"
+  | "host";
 
 export interface AssemblyParseValueContext {
   cursor: string;

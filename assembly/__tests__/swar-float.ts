@@ -1,5 +1,6 @@
 import {
   deserializeFloatScalar,
+  deserializeFloatPacked4,
   deserializeFloat_SWAR,
 } from "../deserialize/swar/float";
 
@@ -39,3 +40,15 @@ export function benchScalar(
   return checksum;
 }
 
+export function benchPacked4(
+  start: usize,
+  end: usize,
+  iterations: u32,
+): f64 {
+  let checksum = 0.0;
+  for (let index: u32 = 0; index < iterations; index++) {
+    deserializeFloatPacked4(start, end, RESULT);
+    checksum += load<f64>(RESULT);
+  }
+  return checksum;
+}

@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { createSchemaManifest, type FieldDecorators, type JsonDefault, type LazyMode, type ObjectSchema, type OmitIfExpression, type SchemaField, type SchemaManifest, type TypeRef } from "./schema-ir.js";
 
 const JSON_TY_MODULES = new Set(["json-ty", "@jairussw/json-ty"]);
-const KNOWN_DECORATORS = new Set(["json", "serializable", "alias", "omit", "omitnull", "omitif", "optional", "lazy", "eager", "raw"]);
+const KNOWN_DECORATORS = new Set(["json", "serializable", "alias", "omit", "omitnull", "omitif", "optional", "lazy", "eager", "raw", "serializer", "deserializer"]);
 
 export interface AnalyzeProgramOptions {
   includeDecorated?: boolean;
@@ -129,6 +129,29 @@ function isDynamicFacadeTypeNode(node: ts.TypeNode, imports: ReadonlyMap<string,
   return ts.isTypeReferenceNode(node) && ts.isQualifiedName(node.typeName) && ts.isIdentifier(node.typeName.left) && imports.get(node.typeName.left.text) === "JSON" && (node.typeName.right.text === "Value" || node.typeName.right.text === "Obj" || node.typeName.right.text === "Arr");
 }
 
+function jsonCallName(expression: ts.Expression, imports: ReadonlyMap<string, string>): "parse" | "stringify" | undefined {
+  if (!ts.isPropertyAccessExpression(expression) || (expression.name.text !== "parse" && expression.name.text !== "stringify")) return undefined;
+  if (ts.isIdentifier(expression.expression) && imports.get(expression.expression.text) === "JSON") return expression.name.text;
+  const owner = expression.expression;
+  return ts.isPropertyAccessExpression(owner) && owner.name.text === "internal" && ts.isIdentifier(owner.expression) && imports.get(owner.expression.text) === "JSON"
+    ? expression.name.text
+    : undefined;
+}
+
+function declaredInJsonNamespace(symbol: ts.Symbol | undefined): boolean {
+  return symbol?.declarations?.some((declaration) => {
+    let parent: ts.Node | undefined = declaration.parent;
+    while (parent && !ts.isModuleDeclaration(parent)) parent = parent.parent;
+    return parent !== undefined && ts.isIdentifier(parent.name) && parent.name.text === "JSON";
+  }) ?? false;
+}
+
+const TYPED_ARRAY_NAMES = new Set([
+  "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
+  "Int32Array", "Uint32Array", "BigInt64Array", "BigUint64Array",
+  "Float32Array", "Float64Array",
+]);
+
 function isSchemaMarkerCall(node: ts.CallExpression, imports: ReadonlyMap<string, string>): boolean {
   if (node.typeArguments?.length !== 1 || node.arguments.length !== 0) return false;
   const expression = node.expression;
@@ -243,6 +266,7 @@ function classLazyMode(declaration: ts.Declaration, imports: ReadonlyMap<string,
 }
 
 function lazyAutoCost(type: TypeRef, schemas: ReadonlyMap<string, ObjectSchema>): number {
+  if (type.kind === "host") return 12;
   if (type.kind === "number" || type.kind === "boolean") return 1;
   if (type.kind === "string") return 10;
   if (type.kind === "array" || type.kind === "union") return 20;
@@ -421,26 +445,34 @@ function unwrapNullable(type: ts.Type): { type: ts.Type; nullable: boolean; opti
   return { type: values[0]!, nullable, optional };
 }
 
-export function schemaNameForType(checker: ts.TypeChecker, type: ts.Type): string {
-  const alias = type.aliasSymbol;
-  if (alias) return alias.getName();
-  const symbol = type.getSymbol();
-  if (!symbol) throw new Error(`Anonymous object type ${checker.typeToString(type)} requires a named alias`);
-  if (type.flags & ts.TypeFlags.Object) {
-    const arguments_ = checker.getTypeArguments(type as ts.TypeReference);
-    if (arguments_.length !== 0) {
-      const suffix = arguments_
-        .map((argument) =>
-          checker
-            .typeToString(argument)
-            .replace(/[^$0-9A-Z_a-z]+/g, "_")
-            .replace(/^_+|_+$/g, ""),
-        )
-        .join("__");
-      return `${symbol.getName()}__${suffix}`;
-    }
+function schemaTypeToken(checker: ts.TypeChecker, type: ts.Type): string {
+  const nullable = type.isUnion() && type.types.some((part) => !!(part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)));
+  if (nullable) {
+    const values = type.types.filter((part) => !(part.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)));
+    if (values.length === 1) return `nullable_${schemaTypeToken(checker, values[0]!)}`;
   }
-  return symbol.getName();
+  if (checker.isArrayType(type) || checker.isTupleType(type)) {
+    const arguments_ = checker.getTypeArguments(type as ts.TypeReference);
+    return `${checker.isTupleType(type) ? "Tuple" : "Array"}_${arguments_.map((argument) => schemaTypeToken(checker, argument)).join("_")}`;
+  }
+  if (type.flags & ts.TypeFlags.StringLike) return "string";
+  if (type.flags & ts.TypeFlags.NumberLike) return "number";
+  if (type.flags & ts.TypeFlags.BooleanLike) return "boolean";
+  if (type.flags & ts.TypeFlags.Null) return "null";
+  const symbol = type.aliasSymbol ?? type.getSymbol();
+  if (!symbol) {
+    const fallback = checker.typeToString(type).replace(/[^$0-9A-Z_a-z]+/g, "_").replace(/^_+|_+$/g, "");
+    if (!fallback) throw new Error(`Anonymous object type ${checker.typeToString(type)} requires a named alias`);
+    return fallback;
+  }
+  const arguments_ = type.aliasTypeArguments ?? (type.flags & ts.TypeFlags.Object ? checker.getTypeArguments(type as ts.TypeReference) : []);
+  return arguments_.length === 0
+    ? symbol.getName()
+    : `${symbol.getName()}__${arguments_.map((argument) => schemaTypeToken(checker, argument)).join("__")}`;
+}
+
+export function schemaNameForType(checker: ts.TypeChecker, type: ts.Type): string {
+  return schemaTypeToken(checker, type);
 }
 
 export function jsonArrayElementType(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
@@ -473,7 +505,9 @@ export function schemaNameForRootValue(checker: ts.TypeChecker, input: ts.Type):
   const { type, nullable } = unwrapNullable(input);
   const kind = type.flags & ts.TypeFlags.StringLike ? "string" : type.flags & ts.TypeFlags.NumberLike ? "number" : type.flags & ts.TypeFlags.BooleanLike ? "boolean" : type.flags & ts.TypeFlags.Null ? "null" : undefined;
   if (!kind) {
-    throw new Error(`json-ty cannot create a primitive root schema for ${checker.typeToString(input)}`);
+    const name = schemaTypeToken(checker, type);
+    if (!name) throw new Error(`json-ty cannot create a root schema for ${checker.typeToString(input)}`);
+    return `${nullable ? "nullable" : ""}${name[0]!.toUpperCase()}${name.slice(1)}Value`;
   }
   return `${nullable ? "nullable" : ""}${nullable ? kind[0]!.toUpperCase() + kind.slice(1) : kind}Value`;
 }
@@ -481,7 +515,7 @@ export function schemaNameForRootValue(checker: ts.TypeChecker, input: ts.Type):
 export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptions = {}): ProgramAnalysis {
   const checker = program.getTypeChecker();
   const schemas = new Map<string, ObjectSchema>();
-  const rootArrays = new Map<string, { element: TypeRef; facade: "array" | "json-array" }>();
+  const rootArrays = new Map<string, { element: TypeRef; elementNullable?: boolean; facade: "array" | "json-array" }>();
   const rootValues = new Map<string, { type: TypeRef; nullable: boolean }>();
   const reachableTypes = new Map<ts.Type, string>();
   const schemaNameOwners = new Map<string, { identity: string; declaration: ts.Declaration }>();
@@ -553,6 +587,28 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     explicitSchemaDeclarations.has(declaration) ||
     isImplicitTypeSchema(declaration) ||
     inheritsExplicitSchema(declaration);
+
+  const customCodec = (type: ts.Type): Extract<import("./schema-ir.js").HostCodec, { kind: "custom" }> | undefined => {
+    const declaration = schemaDeclarationOf(type);
+    if (!declaration || !ts.isClassDeclaration(declaration)) return undefined;
+    const imports = importsFor(declaration.getSourceFile());
+    let serializerName: string | undefined;
+    let deserializerName: string | undefined;
+    let shape: "any" | "string" | "number" | "object" | "array" | "boolean" | "null" = "any";
+    for (const member of declaration.members) {
+      if (!ts.isMethodDeclaration(member) || !member.name || !ts.isIdentifier(member.name)) continue;
+      for (const decorator of decoratorInfo(member, imports)) {
+        if (decorator.name !== "serializer" && decorator.name !== "deserializer") continue;
+        const argument = decorator.call?.arguments[0];
+        if (argument && ts.isStringLiteral(argument) && ["any", "string", "number", "object", "array", "boolean", "null"].includes(argument.text)) shape = argument.text as typeof shape;
+        if (decorator.name === "serializer") serializerName = member.name.text;
+        else deserializerName = member.name.text;
+      }
+    }
+    if (!serializerName && !deserializerName) return undefined;
+    if (!serializerName || !deserializerName) throw new Error(`${checker.typeToString(type)} must define both @serializer and @deserializer methods`);
+    return { kind: "custom", typeName: schemaNameForType(checker, type), serializer: serializerName, deserializer: deserializerName, shape };
+  };
 
   const enqueue = (type: ts.Type, declaration?: ts.Declaration): string => {
     const symbol = type.aliasSymbol ?? type.getSymbol();
@@ -637,10 +693,52 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     }
     const unwrapped = unwrapNullable(input);
     const type = unwrapped.type;
+    const symbol = type.aliasSymbol ?? type.getSymbol();
+    const symbolName = symbol?.getName();
+    const typeArguments = type.flags & ts.TypeFlags.Object
+      ? checker.getTypeArguments(type as ts.TypeReference)
+      : [];
+    const custom = customCodec(type);
+    if (custom) return { ref: { kind: "host", codec: custom }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+    if (symbolName === "Date") {
+      return { ref: { kind: "host", codec: { kind: "date" } }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+    }
+    if (symbolName === "Map" && typeArguments.length >= 2) {
+      return {
+        ref: { kind: "host", codec: { kind: "map", key: toTypeRef(typeArguments[0]!).ref, value: toTypeRef(typeArguments[1]!).ref } },
+        nullable: unwrapped.nullable,
+        optional: unwrapped.optional,
+      };
+    }
+    if (symbolName === "Set" && typeArguments.length >= 1) {
+      return {
+        ref: { kind: "host", codec: { kind: "set", element: toTypeRef(typeArguments[0]!).ref } },
+        nullable: unwrapped.nullable,
+        optional: unwrapped.optional,
+      };
+    }
+    if (symbolName && TYPED_ARRAY_NAMES.has(symbolName)) {
+      return { ref: { kind: "host", codec: { kind: "typed-array", name: symbolName } }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+    }
+    if (symbolName === "ArrayBuffer") {
+      return { ref: { kind: "host", codec: { kind: "array-buffer" } }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+    }
+    if (declaredInJsonNamespace(symbol)) {
+      if (symbolName === "Raw") return { ref: { kind: "host", codec: { kind: "raw" } }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+      if (symbolName === "Box" && typeArguments[0]) return { ref: { kind: "host", codec: { kind: "box", value: toTypeRef(typeArguments[0]).ref } }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+      if (symbolName === "Value" || symbolName === "Obj" || symbolName === "Arr") {
+        const facade = symbolName === "Obj" ? "object" : symbolName === "Arr" ? "array" : "value";
+        return { ref: { kind: "host", codec: { kind: "dynamic", facade } }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+      }
+    }
+    if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
+      return { ref: { kind: "host", codec: { kind: "arbitrary" } }, nullable: unwrapped.nullable, optional: unwrapped.optional };
+    }
     const jsonArrayElement = jsonArrayElementType(checker, type);
     if (jsonArrayElement) {
+      const element = toTypeRef(jsonArrayElement);
       return {
-        ref: { kind: "array", element: toTypeRef(jsonArrayElement).ref, facade: "json-array" },
+        ref: { kind: "array", element: element.ref, ...(element.nullable ? { elementNullable: true } : {}), facade: "json-array" },
         nullable: unwrapped.nullable,
         optional: unwrapped.optional,
       };
@@ -658,12 +756,14 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
       const arguments_ = checker.getTypeArguments(type as ts.TypeReference);
       const element = arguments_[0];
       if (!element) throw new Error("Unable to resolve array element type");
-      const elements = checker.isTupleType(type) ? arguments_.map((argument) => toTypeRef(argument).ref) : undefined;
+      const elementType = toTypeRef(element);
+      const tupleTypes = checker.isTupleType(type) ? arguments_.map((argument) => toTypeRef(argument)) : undefined;
       return {
         ref: {
           kind: "array",
-          element: toTypeRef(element).ref,
-          ...(elements ? { elements } : {}),
+          element: elementType.ref,
+          ...(elementType.nullable ? { elementNullable: true } : {}),
+          ...(tupleTypes ? { elements: tupleTypes.map((item) => item.ref), elementsNullable: tupleTypes.map((item) => item.nullable) } : {}),
           facade: "array",
         },
         nullable: unwrapped.nullable,
@@ -688,34 +788,61 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     if (sourceFile.isDeclarationFile) continue;
     const imports = importsFor(sourceFile);
     const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node) && node.typeArguments?.length === 1) {
-        const expression = node.expression;
-        if (ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.expression) && imports.get(expression.expression.text) === "JSON" && (expression.name.text === "parse" || expression.name.text === "stringify")) {
-          if (isDynamicFacadeTypeNode(node.typeArguments[0]!, imports)) {
+      if (ts.isCallExpression(node)) {
+        const callName = jsonCallName(node.expression, imports);
+        const jsonCall = callName !== undefined;
+        const inferredStringify = callName === "stringify" && !node.typeArguments?.length && node.arguments.length === 1;
+        if (jsonCall && (node.typeArguments?.length === 1 || inferredStringify)) {
+          const inferredType = inferredStringify ? checker.getTypeAtLocation(node.arguments[0]!) : undefined;
+          const typeNode = node.typeArguments?.[0] ?? checker.typeToTypeNode(inferredType!, sourceFile, ts.NodeBuilderFlags.NoTruncation);
+          if (!typeNode) throw new Error("json-ty cannot infer the JSON.stringify argument type");
+          if (isDynamicFacadeTypeNode(typeNode, imports)) {
             ts.forEachChild(node, visit);
             return;
           }
-          const type = checker.getTypeFromTypeNode(node.typeArguments[0]!);
+          const type = inferredType ?? checker.getTypeFromTypeNode(typeNode);
+          if (type.flags & ts.TypeFlags.TypeParameter) {
+            ts.forEachChild(node, visit);
+            return;
+          }
           const normalized = unwrapNullable(type).type;
           const jsonArrayElement = jsonArrayElementType(checker, normalized);
           if (checker.isArrayType(normalized) || jsonArrayElement) {
             const facade = jsonArrayElement ? "json-array" : "array";
             const element = jsonArrayElement ?? checker.getTypeArguments(normalized as ts.TypeReference)[0];
             if (element) {
-              const elementRef = toTypeRef(element).ref;
+              const elementType = toTypeRef(element);
+              const elementRef = elementType.ref;
               const rootName = schemaNameForRootArray(checker, element, facade);
               const existing = rootArrays.get(rootName);
-              if (existing && JSON.stringify(existing) !== JSON.stringify({ element: elementRef, facade })) {
+              const candidate: { element: TypeRef; elementNullable?: boolean; facade: "array" | "json-array" } = { element: elementRef, ...(elementType.nullable ? { elementNullable: true } : {}), facade };
+              if (existing && JSON.stringify(existing) !== JSON.stringify(candidate)) {
                 throw new Error(`Root array schema name collision for ${rootName}`);
               }
-              rootArrays.set(rootName, { element: elementRef, facade });
+              rootArrays.set(rootName, candidate);
             }
-          } else if (normalized.flags & ts.TypeFlags.Object) {
-            enqueue(normalized);
           } else {
             const root = toTypeRef(type);
+            if (root.ref.kind === "object") {
+              if (root.nullable) {
+                const rootName = schemaNameForRootValue(checker, type);
+                const existing = rootValues.get(rootName);
+                const candidate = { type: root.ref, nullable: true };
+                if (existing && JSON.stringify(existing) !== JSON.stringify(candidate)) {
+                  throw new Error(`Root value schema name collision for ${rootName}`);
+                }
+                rootValues.set(rootName, candidate);
+              } else enqueue(normalized);
+              ts.forEachChild(node, visit);
+              return;
+            }
+            if (root.ref.kind === "host" && root.ref.codec.kind === "custom") {
+              enqueue(normalized);
+              ts.forEachChild(node, visit);
+              return;
+            }
             if (root.ref.kind !== "string" && root.ref.kind !== "number" && root.ref.kind !== "boolean" && root.ref.kind !== "null") {
-              throw new Error(`Unsupported JSON root type ${checker.typeToString(type)}`);
+              if (root.ref.kind !== "host") throw new Error(`Unsupported JSON root type ${checker.typeToString(type)}`);
             }
             const rootName = schemaNameForRootValue(checker, type);
             const existing = rootValues.get(rootName);
@@ -742,7 +869,7 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
         {
           name: "value",
           kind: "array",
-          type: { kind: "array", element: array.element, facade: array.facade },
+          type: { kind: "array", element: array.element, ...(array.elementNullable ? { elementNullable: true } : {}), facade: array.facade },
         },
       ],
     });
@@ -769,6 +896,18 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     const { type, declaration } = queued.shift()!;
     const name = reachableTypes.get(type)!;
     if (schemas.has(name)) continue;
+    const custom = customCodec(type);
+    if (custom) {
+      schemas.set(name, {
+        name,
+        root: "value",
+        declarationKind: "class",
+        sourceFile: declaration.getSourceFile().fileName,
+        fields: [{ name: "value", kind: "host", type: { kind: "host", codec: custom } }],
+        decorators: { json: true, lazyMode: "none" },
+      });
+      continue;
+    }
     const sourceFile = declaration.getSourceFile();
     const imports = importsFor(sourceFile);
     const fields: SchemaField[] = [];

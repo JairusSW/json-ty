@@ -23,6 +23,7 @@ const series = {
   stringArray: JSON.stringify(records.map((record) => record.label)),
   objectArray: JSON.stringify(records),
   prettyObjects: JSON.stringify(records, null, 2),
+  escapedStrings: JSON.stringify(Array.from({ length: 1024 }, (_, index) => `row-${index}-\\\\\\\"-[{]}-tail`)),
 };
 
 function median(name, end, iterations) {
@@ -48,9 +49,11 @@ for (const [name, source] of Object.entries(series)) {
   const iterations = Math.max(1500, Math.floor(140_000_000 / payload.length));
   const simd = median("benchSimd", end, iterations);
   const swar = median("benchSwar", end, iterations);
-  if (simd.checksum !== swar.checksum) throw new Error(`${name} checksum mismatch`);
+  const parity = median("benchParity", end, iterations);
+  if (simd.checksum !== swar.checksum || simd.checksum !== parity.checksum) throw new Error(`${name} checksum mismatch`);
   const simdNs = (simd.milliseconds * 1e6) / iterations;
   const swarNs = (swar.milliseconds * 1e6) / iterations;
+  const parityNs = (parity.milliseconds * 1e6) / iterations;
   results.push({
     name,
     payloadBytes: payload.length,
@@ -58,6 +61,8 @@ for (const [name, source] of Object.entries(series)) {
     swarNsPerValue: Number(swarNs.toFixed(2)),
     gibPerSecond: Number((payload.length / simdNs).toFixed(3)),
     speedup: Number((swarNs / simdNs).toFixed(3)),
+    parityNsPerValue: Number(parityNs.toFixed(2)),
+    parityVsCurrent: Number((simdNs / parityNs).toFixed(3)),
   });
 }
 

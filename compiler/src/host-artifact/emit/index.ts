@@ -7,6 +7,7 @@ import { objectHostEmitter } from "./object.js";
 import { stringHostEmitter } from "./string.js";
 import type { HostFieldContext, HostTypeEmitter } from "./types.js";
 import { unionHostEmitter } from "./union.js";
+import { hostHostEmitter } from "./host.js";
 
 const emitters: Record<TypeRef["kind"], HostTypeEmitter> = {
   number: numberHostEmitter as HostTypeEmitter,
@@ -16,6 +17,7 @@ const emitters: Record<TypeRef["kind"], HostTypeEmitter> = {
   object: objectHostEmitter as HostTypeEmitter,
   array: arrayHostEmitter as HostTypeEmitter,
   union: unionHostEmitter as HostTypeEmitter,
+  host: hostHostEmitter as HostTypeEmitter,
 };
 
 export function emitHostAccessor(type: TypeRef, context: HostFieldContext): string {

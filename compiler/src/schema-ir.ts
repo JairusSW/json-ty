@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_IR_VERSION = 6;
+export const SCHEMA_IR_VERSION = 10;
 
 export type LazyMode = "none" | "auto" | "all";
 
@@ -18,8 +18,11 @@ export interface ObjectTypeRef {
 export interface ArrayTypeRef {
   kind: "array";
   element: TypeRef;
+  /** Homogeneous element nullability; represented by a zero reference slot. */
+  elementNullable?: boolean;
   /** Present for fixed heterogeneous tuples. */
   elements?: TypeRef[];
+  elementsNullable?: boolean[];
   facade?: "array" | "json-array";
 }
 
@@ -34,7 +37,25 @@ export interface UnionTypeRef {
   variants: UnionVariantRef[];
 }
 
-export type TypeRef = PrimitiveTypeRef | ObjectTypeRef | ArrayTypeRef | UnionTypeRef;
+export type HostCodec =
+  | { kind: "date" }
+  | { kind: "map"; key: TypeRef; value: TypeRef }
+  | { kind: "set"; element: TypeRef }
+  | { kind: "typed-array"; name: string }
+  | { kind: "array-buffer" }
+  | { kind: "box"; value: TypeRef }
+  | { kind: "raw" }
+  | { kind: "dynamic"; facade: "value" | "object" | "array" }
+  | { kind: "custom"; typeName: string; serializer: string; deserializer: string; shape: "any" | "string" | "number" | "object" | "array" | "boolean" | "null" }
+  | { kind: "arbitrary" };
+
+/** A validated raw JSON span materialized by a host codec on first access. */
+export interface HostTypeRef {
+  kind: "host";
+  codec: HostCodec;
+}
+
+export type TypeRef = PrimitiveTypeRef | ObjectTypeRef | ArrayTypeRef | UnionTypeRef | HostTypeRef;
 
 /** JSON-compatible compile-time initializer retained as an immutable schema constant. */
 export type JsonDefault = string | number | boolean | null | JsonDefault[] | { readonly [key: string]: JsonDefault };
@@ -152,6 +173,19 @@ export interface SchemaManifest {
   hash: string;
 }
 
+function isNativeStringifyCompatible(type: TypeRef): boolean {
+  if (type.kind === "null" || type.kind === "boolean" || type.kind === "number" || type.kind === "string") return true;
+  if (type.kind === "array") {
+    return type.elements
+      ? type.elements.every(isNativeStringifyCompatible)
+      : isNativeStringifyCompatible(type.element);
+  }
+  // Date has exactly the JSON.stringify representation used by its codec.
+  // Other host facades (Box, Map, Set, Raw, dynamic values, typed arrays) do
+  // not, and nested records/unions may have their own decorator-driven shape.
+  return type.kind === "host" && type.codec.kind === "date";
+}
+
 export function layoutObject(schema: ObjectSchema): ObjectLayout {
   if (!/^[$A-Z_a-z][$\w]*$/.test(schema.name)) {
     throw new Error(`Invalid schema name ${JSON.stringify(schema.name)}`);
@@ -175,7 +209,7 @@ export function layoutObject(schema: ObjectSchema): ObjectLayout {
   const hasDefaults = fields.some((field) => field.defaultValue !== undefined);
   const canMatchDefaultDocument = hasDefaults && fields.every((field) => !field.hostManaged && !field.decorators?.omitIf && !field.decorators?.raw && !field.decorators?.codec);
   const hasOptionalShape = fields.some((field) => field.optional || field.defaultValue !== undefined || field.decorators?.optional);
-  const retainsSource = fields.some((field) => field.kind === "string" || field.decorators?.lazy);
+  const retainsSource = fields.some((field) => field.kind === "string" || field.kind === "host" || field.decorators?.lazy);
   const fullWrite = fields.length !== 0 && fields.every((field) => !field.optional && field.defaultValue === undefined && !field.decorators?.optional);
   return {
     name: schema.name,
@@ -186,7 +220,7 @@ export function layoutObject(schema: ObjectSchema): ObjectLayout {
     fields,
     ...(lazyOffset === undefined ? {} : { lazyOffset }),
     recordSize,
-    nativeStringifyCompatible: fields.every((field) => field.jsonName === field.name && !field.decorators?.omit && !field.decorators?.omitNull && !field.decorators?.omitIf && !field.decorators?.raw && !field.decorators?.codec),
+    nativeStringifyCompatible: fields.every((field) => isNativeStringifyCompatible(field.type!) && field.jsonName === field.name && !field.decorators?.omit && !field.decorators?.omitNull && !field.decorators?.omitIf && !field.decorators?.raw && !field.decorators?.codec),
     features: {
       deserialize: {
         defaultDocument: canMatchDefaultDocument,

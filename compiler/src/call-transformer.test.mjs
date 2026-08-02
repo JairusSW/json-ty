@@ -15,7 +15,8 @@ const result = ts.transform(source, [
 const output = ts.createPrinter().printFile(result.transformed[0]);
 result.dispose();
 
-assert.match(output, /import \{ __jsonTyRuntime as __rawJson \}/);
+assert.match(output, /import \{ __jsonTyRuntime as __rawJson, registerSchemaClass as __jsonTy_registerSchemaClass \}/);
+assert.match(output, /__jsonTy_registerSchemaClass\("CustomPoint", CustomPoint\)/);
 assert.match(output, /__rawJson\.parsePlayer\("\{\}", Player\)/);
 assert.match(output, /__rawJson\.stringifyPlayer\(player\)/);
 assert.match(output, /__rawJson\.parsePlayerArray\("\[\]", Player\)/);

@@ -64,6 +64,49 @@ assert.match(
 const executableRuntimePath = join(generatedDirectory, "runtime-executable.mjs");
 writeFileSync(executableRuntimePath, generatedHost.replace('from "json-ty/raw"', `from ${JSON.stringify(pathToFileURL(resolve("src/raw/index.js")).href)}`));
 const generatedRuntime = await import(`${pathToFileURL(executableRuntimePath).href}?${Date.now()}`);
+const generatedHostCollectionsLayout = layouts.find((layout) => layout.name === "HostCollections");
+const hostSource = '{"at":"1970-01-01T00:00:00.000Z","counts":{"a":1},"positions":{"home":{"x":3,"y":4}},"tags":["x","x","y"],"bytes":[1,2,255],"buffer":[3,4],"score":5,"payload":{"raw":true},"dynamic":[1,true]}';
+const generatedHostCollections = generatedRuntime[generatedHostCollectionsLayout.abi.parse](hostSource);
+assert.equal(generatedHostCollections.at.toISOString(), "1970-01-01T00:00:00.000Z");
+assert.deepEqual([...generatedHostCollections.counts], [["a", 1]]);
+assert.deepEqual([...generatedHostCollections.positions].map(([key, value]) => [key, value.x, value.y]), [["home", 3, 4]]);
+assert.deepEqual([...generatedHostCollections.tags], ["x", "y"]);
+assert.deepEqual([...generatedHostCollections.bytes], [1, 2, 255]);
+assert.deepEqual([...new Uint8Array(generatedHostCollections.buffer)], [3, 4]);
+assert.equal(generatedHostCollections.score.value, 5);
+assert.equal(generatedHostCollections.payload.toString(), '{"raw":true}');
+assert.deepEqual(generatedHostCollections.dynamic.toArray(), [1, true]);
+assert.equal(generatedRuntime[generatedHostCollectionsLayout.abi.serialize](generatedHostCollections), hostSource.replace('["x","x","y"]', '["x","y"]'));
+generatedHostCollections.at = new Date("2025-02-03T21:28:40.525Z");
+generatedHostCollections.tags = new Set(["changed"]);
+assert.match(generatedRuntime[generatedHostCollectionsLayout.abi.serialize](generatedHostCollections), /^\{"at":"2025-02-03T21:28:40.525Z","counts":\{"a":1\},"positions":\{"home":\{"x":3,"y":4\}\},"tags":\["changed"\]/);
+generatedHostCollections.dispose();
+const generatedDateLayout = layouts.find((layout) => layout.name === "DateValue");
+const generatedDate = generatedRuntime[generatedDateLayout.abi.parse]('"2024-02-29T12:30:45.123Z"');
+assert.equal(generatedDate.toISOString(), "2024-02-29T12:30:45.123Z");
+assert.equal(generatedRuntime[generatedDateLayout.abi.serialize](generatedDate), '"2024-02-29T12:30:45.123Z"');
+assert.throws(() => generatedRuntime[generatedDateLayout.abi.parse]("1"), /ISO date string/);
+class RuntimeCustomPoint {
+  constructor(x = 0, y = 0) { this.x = x; this.y = y; }
+  encode(self) { return JSON.stringify(`${self.x},${self.y}`); }
+  decode(source) { const [x, y] = JSON.parse(source).split(","); return new RuntimeCustomPoint(Number(x), Number(y)); }
+}
+generatedRuntime.registerSchemaClass("CustomPoint", RuntimeCustomPoint);
+assert.equal(generatedRuntime.__jsonTyRuntime.stringifyDynamic(new RuntimeCustomPoint(2, 5)), '"2,5"');
+const generatedCustomPointLayout = layouts.find((layout) => layout.name === "CustomPoint");
+const generatedCustomPoint = generatedRuntime[generatedCustomPointLayout.abi.parse]('"1.5,-2.25"', RuntimeCustomPoint);
+assert.ok(generatedCustomPoint instanceof RuntimeCustomPoint);
+assert.deepEqual([generatedCustomPoint.x, generatedCustomPoint.y], [1.5, -2.25]);
+assert.equal(generatedRuntime[generatedCustomPointLayout.abi.serialize](generatedCustomPoint), '"1.5,-2.25"');
+assert.throws(() => generatedRuntime[generatedCustomPointLayout.abi.parse]("1", RuntimeCustomPoint), /JSON shape string/);
+const generatedCustomHolderLayout = layouts.find((layout) => layout.name === "CustomHolder");
+const generatedCustomHolder = generatedRuntime[generatedCustomHolderLayout.abi.parse]('{"point":"3,4","nullable":null}');
+assert.ok(generatedCustomHolder.point instanceof RuntimeCustomPoint);
+assert.deepEqual([generatedCustomHolder.point.x, generatedCustomHolder.point.y], [3, 4]);
+assert.equal(generatedCustomHolder.nullable, null);
+assert.equal(generatedRuntime[generatedCustomHolderLayout.abi.serialize](generatedCustomHolder), '{"point":"3,4","nullable":null}');
+generatedCustomHolder.point.x = 8;
+assert.equal(generatedRuntime[generatedCustomHolderLayout.abi.serialize](generatedCustomHolder), '{"point":"8,4","nullable":null}');
 const generatedEntityLayout = layouts.find((layout) => layout.name === "AuditedEntity");
 const generatedEntity = generatedRuntime[generatedEntityLayout.abi.parse](
   '{"id":1,"name":"Ada","createdAt":"now","note":"required override","updatedAt":"later"}',

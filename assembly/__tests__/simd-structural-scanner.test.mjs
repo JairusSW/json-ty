@@ -25,6 +25,7 @@ const cases = [
   '{"a":[1,2,{"b":"x"}],"c":false}',
   "[".repeat(512) + "0" + "]".repeat(512),
 ];
+for (let run = 1; run <= 32; run++) cases.push(JSON.stringify([`prefix-${"\\".repeat(run)}\"-[{]}-suffix`, { run }]));
 
 let seed = 0x9e3779b9;
 const random = () => {
@@ -51,6 +52,7 @@ for (let offset = 1; offset <= 31; offset++) {
         : input === "null\n" ? offset + 4
           : offset + encoded.length;
     assert.equal(api.scan(offset, offset + encoded.length), expected, `SIMD boundary mismatch at ${offset}: ${input}`);
+    assert.equal(api.scanParity(offset, offset + encoded.length), expected, `SIMD parity boundary mismatch at ${offset}: ${input}`);
     assert.equal(api.scan(offset, offset + encoded.length), api.oracle(offset, offset + encoded.length), `SWAR oracle mismatch at ${offset}: ${input}`);
   }
 }

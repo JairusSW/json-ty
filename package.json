@@ -31,6 +31,7 @@
     "SECURITY.md",
     "CODE_OF_CONDUCT.md",
     "THIRD_PARTY_NOTICES.md",
+    "licenses/simdjson-LICENSE",
     "CHANGELOG.md",
     "bench/README.md",
     "bench/charts/overview-deserialize.svg",
@@ -121,8 +122,9 @@
   "scripts": {
     "ci": "act",
     "test": "npm run test:raw && npm run test:compiler && npm run test:benchmark-plan",
-    "test:all": "npm test && npm run test:swar-port && npm run test:rfc-oracle && npm run test:fuzz:raw:tiers",
+    "test:all": "npm test && npm run test:integration && npm run test:swar-port && npm run test:rfc-oracle && npm run test:fuzz:raw:tiers",
     "test:benchmark-plan": "node ./scripts/lib/benchmark-plan.test.mjs",
+    "test:integration": "npm run build && node ./scripts/run-integration-test-suite.mjs",
     "bench": "bash ./scripts/run-bench.sh overview",
     "bench:run": "bash ./scripts/run-bench.sh",
     "bench:charts": "bash ./scripts/build-charts.sh",

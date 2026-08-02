@@ -13,7 +13,7 @@ async standalone orchestration path.
 
 The TypeScript analyzer is the authority for type identity and reachability.
 It discovers `json-ty` imports, decorated declarations, and typed calls, then
-normalizes them into schema IR version 5. Source paths are excluded from the
+normalizes them into schema IR version 7. Source paths are excluded from the
 semantic hash. AssemblyScript generation, host layouts, call rewriting, and
 serialization policy all consume this IR.
 

@@ -96,8 +96,11 @@ corpus; `npm run bench:tiers` records correctness, compile time, size, raw,
 Overview, Classic, lazy, and parity measurements in one report.
 
 The SIMD tier includes dedicated 16-byte UTF-8 string, structural/value-end,
-and retained-string serialization kernels. Escaped-string serialization keeps
-the SIMD sparse-escape path and routes dense escape blocks to the faster SWAR
-loop. Their tests cover unaligned starts, bounded tails, malformed UTF-8,
-escapes, and exact-capacity output against the SWAR implementations. The
+and retained-string serialization kernels. Strict non-ASCII strings use a
+simdjson-derived lookup4 validator while ASCII and trusted strings retain the
+lower-overhead classifier. The value-end scanner switches to block backslash
+parity only for long escape runs. Escaped-string serialization keeps the SIMD
+sparse-escape path and routes dense escape blocks to the faster SWAR loop.
+Their tests cover unaligned starts, bounded tails, malformed UTF-8, escapes,
+and exact-capacity output against the SWAR implementations. The
 `bench:swar-port:*:simd` head-to-heads record the selection evidence directly.

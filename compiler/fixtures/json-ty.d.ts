@@ -1,6 +1,14 @@
 declare module "json-ty" {
   export namespace JSON {
     type Lazy<T> = T;
+    class Raw {
+      constructor(value: string);
+      value: string;
+    }
+    class Box<T> {
+      constructor(value: T);
+      value: T;
+    }
     interface Value {
       readonly type: string;
       toJS(): unknown;
@@ -30,4 +38,6 @@ declare module "json-ty" {
   export function lazy(value: object, key: string | symbol): void;
   export function lazy(options: "none" | "auto" | "all" | { none?: true; auto?: true; all?: true; mode?: "none" | "auto" | "all" }): ClassDecorator;
   export function eager(value: object, key: string | symbol): void;
+  export function serializer(shape?: "any" | "string" | "number" | "object" | "array" | "boolean" | "null"): MethodDecorator;
+  export function deserializer(shape?: "any" | "string" | "number" | "object" | "array" | "boolean" | "null"): MethodDecorator;
 }

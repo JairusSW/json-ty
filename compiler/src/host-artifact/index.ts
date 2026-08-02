@@ -12,7 +12,7 @@ function emitViewClasses(layouts: ObjectLayout[]): string {
       const schemaVariable = `schema${schemaIndex}`;
       const caches = new Map<number, string>();
       for (const field of layout.fields) {
-        if (field.kind === "string" || field.kind === "object" || field.kind === "array" || field.kind === "union") {
+        if (field.kind === "string" || field.kind === "object" || field.kind === "array" || field.kind === "union" || field.kind === "host") {
           caches.set(field.index, `${schemaVariable}Cache${field.index}`);
         }
       }
@@ -89,7 +89,11 @@ function bindingTarget(layout: ObjectLayout, schemaVariable: string): string {
   const fieldType = layout.fields[0]?.type;
   const element = fieldType?.kind === "array" ? fieldType.element : undefined;
   if (!layout.root) return schemaVariable;
-  const targetName = element?.kind === "object" ? element.typeName : "";
+  const targetName = element?.kind === "object"
+    ? element.typeName
+    : fieldType?.kind === "host" && fieldType.codec.kind === "custom"
+      ? fieldType.codec.typeName
+      : "";
   return `${schemaVariable}._registry.get(${JSON.stringify(targetName)})`;
 }
 
@@ -102,10 +106,14 @@ binding._parsers.set(${JSON.stringify(`${layout.name}:strict`)}, binding.exports
 binding._parsers.set(${JSON.stringify(`${layout.name}:trusted`)}, binding.exports.${layout.abi!.parseTrusted});
 binding._serializers.set(${JSON.stringify(layout.name)}, binding.exports.${layout.abi!.serialize});
 ${layout.abi!.materialize ? `binding._materializers.set(${JSON.stringify(layout.name)}, binding.exports.${layout.abi!.materialize});` : ""}
-export const ${layout.abi!.parse} = (input, constructor) => {
+export const ${layout.abi!.parse} = (input, outOrConstructor, constructor) => {
   const target = ${bindingTarget(layout, schemaVariable)};
-  if (constructor && target && target.Class !== constructor) bindSchemaClass(target, constructor);
-  return binding.parse(${schemaVariable}, input);
+  const classConstructor = constructor ?? (typeof outOrConstructor === "function" ? outOrConstructor : undefined);
+  if (classConstructor && target && target.Class !== classConstructor) bindSchemaClass(target, classConstructor);
+  const parsed = binding.parse(${schemaVariable}, input);
+  return typeof outOrConstructor === "function" || outOrConstructor == null
+    ? parsed
+    : binding.reuse(${schemaVariable}, outOrConstructor, parsed);
 };
 export const ${layout.abi!.serialize} = (value) => binding.stringify(${schemaVariable}, value);
 __jsonTyRuntime.${`parse${layout.name}`} = ${layout.abi!.parse};
@@ -133,6 +141,7 @@ export function generateHostArtifact(layouts: ObjectLayout[]): HostArtifact {
   materializeGeneratedField,
   readViewOverlay,
   readGeneratedComposite,
+  readGeneratedHost,
   writeGeneratedField,
 } from "json-ty/raw";
 
@@ -144,12 +153,19 @@ ${emitPlainStringifiers(layouts)}
 export const __jsonTyRuntime = {
   binding,
   schemas,
-  parseDynamic(input) {
-    return binding.parseDynamic(input);
+  parseDynamic(input, options) {
+    return binding.parseDynamic(input, options);
   },
   stringifyDynamic(value) {
     return binding.stringifyDynamic(value);
   },
+};
+export const registerSchemaClass = (name, constructor) => {
+  const schema = schemas.get(name);
+  if (!schema) throw new ReferenceError("Unknown generated schema " + name);
+  bindSchemaClass(schema, constructor);
+  const codec = schema.root === "value" && schema.fields[0]?.type?.kind === "host" ? schema.fields[0].type.codec : undefined;
+  if (codec?.kind === "custom") Object.defineProperty(constructor.prototype, Symbol.for("json-ty.custom-codec"), { value: codec, configurable: true });
 };
 ${emitSchemaBindings(layouts)}
 `;

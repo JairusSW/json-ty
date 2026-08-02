@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": false,
+    "strictNullChecks": true,
+    "experimentalDecorators": true,
+    "rootDir": "../..",
+    "outDir": "../../build/integration-tests/app"
+  },
+  "files": [
+    "globals.d.ts",
+    "harness.ts",
+    "bool.spec.ts",
+    "null.spec.ts",
+    "date.spec.ts",
+    "types.spec.ts",
+    "tiny-payloads.spec.ts"
+  ]
+}

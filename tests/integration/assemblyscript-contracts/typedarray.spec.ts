@@ -1,0 +1,664 @@
+import { JSON } from "..";
+import { describe, expect } from "as-test";
+import { bs } from "../../lib/as-bs";
+
+function makeArbitraryU8(value: u8): JSON.Value {
+  return JSON.Value.from<u8>(value);
+}
+
+function makeArbitraryU16(value: u16): JSON.Value {
+  return JSON.Value.from<u16>(value);
+}
+
+function makeArbitraryU32(value: u32): JSON.Value {
+  return JSON.Value.from<u32>(value);
+}
+
+function makeArbitraryU64(value: u64): JSON.Value {
+  return JSON.Value.from<u64>(value);
+}
+
+function makeArbitraryI8(value: i8): JSON.Value {
+  return JSON.Value.from<i8>(value);
+}
+
+function makeArbitraryI16(value: i16): JSON.Value {
+  return JSON.Value.from<i16>(value);
+}
+
+function makeArbitraryI64(value: i64): JSON.Value {
+  return JSON.Value.from<i64>(value);
+}
+
+function makeArbitraryF32(value: f32): JSON.Value {
+  return JSON.Value.from<f32>(value);
+}
+
+function makeInt8Array(): Int8Array {
+  const out = new Int8Array(3);
+  out[0] = -1;
+  out[1] = 0;
+  out[2] = 127;
+  return out;
+}
+
+function makeUint8Array(): Uint8Array {
+  const out = new Uint8Array(4);
+  out[0] = 0;
+  out[1] = 1;
+  out[2] = 2;
+  out[3] = 255;
+  return out;
+}
+
+function makeUint8ClampedArray(): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(3);
+  out[0] = 0;
+  out[1] = 128;
+  out[2] = 255;
+  return out;
+}
+
+function makeInt16Array(): Int16Array {
+  const out = new Int16Array(3);
+  out[0] = -32768;
+  out[1] = 0;
+  out[2] = 32767;
+  return out;
+}
+
+function makeUint16Array(): Uint16Array {
+  const out = new Uint16Array(3);
+  out[0] = 0;
+  out[1] = 42;
+  out[2] = 65535;
+  return out;
+}
+
+function makeInt32Array(): Int32Array {
+  const out = new Int32Array(3);
+  out[0] = -2147483648;
+  out[1] = 0;
+  out[2] = 2147483647;
+  return out;
+}
+
+function makeUint32Array(): Uint32Array {
+  const out = new Uint32Array(3);
+  out[0] = 0;
+  out[1] = 42;
+  out[2] = 4294967295;
+  return out;
+}
+
+function makeInt64Array(): Int64Array {
+  const out = new Int64Array(3);
+  out[0] = -9007199254740991;
+  out[1] = 0;
+  out[2] = 9007199254740991;
+  return out;
+}
+
+function makeUint64Array(): Uint64Array {
+  const out = new Uint64Array(3);
+  out[0] = 0;
+  out[1] = 42;
+  out[2] = 9007199254740991;
+  return out;
+}
+
+function makeFloat32Array(): Float32Array {
+  const out = new Float32Array(3);
+  out[0] = -1.5;
+  out[1] = 0.25;
+  out[2] = 3.75;
+  return out;
+}
+
+function makeFloat64Array(): Float64Array {
+  const out = new Float64Array(3);
+  out[0] = -1.5;
+  out[1] = 0.125;
+  out[2] = 3.14159;
+  return out;
+}
+
+function makeArrayBuffer(): ArrayBuffer {
+  const out = new ArrayBuffer(4);
+  const view = Uint8Array.wrap(out);
+  view[0] = 10;
+  view[1] = 20;
+  view[2] = 30;
+  view[3] = 40;
+  return out;
+}
+
+function makeRampUint8Array(size: i32): Uint8Array {
+  const out = new Uint8Array(size);
+  for (let i = 0; i < size; i++) {
+    out[i] = <u8>((i * 17 + 31) & 0xff);
+  }
+  return out;
+}
+
+function makeRampArrayBuffer(size: i32): ArrayBuffer {
+  const out = new ArrayBuffer(size);
+  const view = Uint8Array.wrap(out);
+  for (let i = 0; i < size; i++) {
+    view[i] = <u8>((i * 23 + 7) & 0xff);
+  }
+  return out;
+}
+
+class PlainBytes extends Uint8Array {
+  constructor(length: i32 = 0) {
+    super(length);
+  }
+}
+
+class PlainFloats extends Float64Array {
+  constructor(length: i32 = 0) {
+    super(length);
+  }
+}
+
+function hexDigit(value: u8): string {
+  return String.fromCharCode(value < 10 ? 48 + value : 87 + value);
+}
+
+function parseHexNibble(code: u16): u8 {
+  if (code >= 48 && code <= 57) return <u8>(code - 48);
+  if (code >= 97 && code <= 102) return <u8>(code - 87);
+  return <u8>(code - 55);
+}
+
+function makeHexBytes(): HexBytes {
+  const out = new HexBytes(4);
+  out[0] = 10;
+  out[1] = 20;
+  out[2] = 30;
+  out[3] = 40;
+  return out;
+}
+
+
+@json
+class HexBytes extends Uint8Array {
+  constructor(length: i32 = 0) {
+    super(length);
+  }
+
+  toHex(): string {
+    let out = "";
+    for (let i = 0; i < this.length; i++) {
+      const value = unchecked(this[i]);
+      out += hexDigit(value >> 4);
+      out += hexDigit(value & 0x0f);
+    }
+    return out;
+  }
+
+  __SERIALIZE_CUSTOM(): void {
+    JSON.__serialize(this.toHex());
+  }
+
+  __DESERIALIZE_CUSTOM(data: string): HexBytes {
+    const raw = JSON.parse<string>(data);
+    const out = new HexBytes(raw.length >> 1);
+
+    for (let i = 0, j = 0; i < raw.length; i += 2, j++) {
+      const hi = parseHexNibble(<u16>raw.charCodeAt(i));
+      const lo = parseHexNibble(<u16>raw.charCodeAt(i + 1));
+      unchecked((out[j] = <u8>((hi << 4) | lo)));
+    }
+
+    return out;
+  }
+}
+
+
+@json
+class HexEnvelope {
+  payload: HexBytes = makeHexBytes();
+}
+
+
+@json
+class BinaryEnvelope {
+  bytes: Uint8Array = makeUint8Array();
+  ints: Int16Array = makeInt16Array();
+  floats: Float32Array = makeFloat32Array();
+  raw: ArrayBuffer = makeArrayBuffer();
+}
+
+
+@json
+class BinaryEnvelopeCtor {
+  bytes: Uint8Array;
+  ints: Int16Array;
+  floats: Float32Array;
+
+  constructor() {
+    this.bytes = makeUint8Array();
+    this.ints = makeInt16Array();
+    this.floats = makeFloat32Array();
+  }
+}
+
+
+@json
+class BinaryContainer {
+  left: BinaryEnvelopeCtor = new BinaryEnvelopeCtor();
+  right: BinaryEnvelope = new BinaryEnvelope();
+}
+
+
+@json
+class TAFieldHolder {
+  items: Int16Array = makeInt16Array();
+  raw: ArrayBuffer = makeArrayBuffer();
+}
+
+describe("Should serialize and deserialize typed arrays by default", () => {
+  const int8 = makeInt8Array();
+  expect(JSON.stringify(int8)).toBe("[-1,0,127]");
+  expect(JSON.stringify(JSON.parse<Int8Array>("[-1,0,127]"))).toBe(
+    JSON.stringify(int8),
+  );
+
+  const uint8 = makeUint8Array();
+  expect(JSON.stringify(uint8)).toBe("[0,1,2,255]");
+  expect(JSON.stringify(JSON.parse<Uint8Array>("[0,1,2,255]"))).toBe(
+    JSON.stringify(uint8),
+  );
+
+  const uint8Clamped = makeUint8ClampedArray();
+  expect(JSON.stringify(uint8Clamped)).toBe("[0,128,255]");
+  expect(JSON.stringify(JSON.parse<Uint8ClampedArray>("[0,128,255]"))).toBe(
+    JSON.stringify(uint8Clamped),
+  );
+
+  const int16 = makeInt16Array();
+  expect(JSON.stringify(int16)).toBe("[-32768,0,32767]");
+  expect(JSON.stringify(JSON.parse<Int16Array>("[-32768,0,32767]"))).toBe(
+    JSON.stringify(int16),
+  );
+
+  const uint16 = makeUint16Array();
+  expect(JSON.stringify(uint16)).toBe("[0,42,65535]");
+  expect(JSON.stringify(JSON.parse<Uint16Array>("[0,42,65535]"))).toBe(
+    JSON.stringify(uint16),
+  );
+
+  const int32 = makeInt32Array();
+  expect(JSON.stringify(int32)).toBe("[-2147483648,0,2147483647]");
+  expect(
+    JSON.stringify(JSON.parse<Int32Array>("[-2147483648,0,2147483647]")),
+  ).toBe(JSON.stringify(int32));
+
+  const uint32 = makeUint32Array();
+  expect(JSON.stringify(uint32)).toBe("[0,42,4294967295]");
+  expect(JSON.stringify(JSON.parse<Uint32Array>("[0,42,4294967295]"))).toBe(
+    JSON.stringify(uint32),
+  );
+
+  const int64 = makeInt64Array();
+  expect(JSON.stringify(int64)).toBe("[-9007199254740991,0,9007199254740991]");
+  expect(
+    JSON.stringify(
+      JSON.parse<Int64Array>("[-9007199254740991,0,9007199254740991]"),
+    ),
+  ).toBe(JSON.stringify(int64));
+
+  const uint64 = makeUint64Array();
+  expect(JSON.stringify(uint64)).toBe("[0,42,9007199254740991]");
+  expect(
+    JSON.stringify(JSON.parse<Uint64Array>("[0,42,9007199254740991]")),
+  ).toBe(JSON.stringify(uint64));
+
+  const float32 = makeFloat32Array();
+  expect(JSON.stringify(float32)).toBe("[-1.5,0.25,3.75]");
+  expect(JSON.stringify(JSON.parse<Float32Array>("[-1.5,0.25,3.75]"))).toBe(
+    JSON.stringify(float32),
+  );
+
+  const float64 = makeFloat64Array();
+  expect(JSON.stringify(float64)).toBe("[-1.5,0.125,3.14159]");
+  expect(JSON.stringify(JSON.parse<Float64Array>("[-1.5,0.125,3.14159]"))).toBe(
+    JSON.stringify(float64),
+  );
+});
+
+describe("Should serialize and deserialize ArrayBuffer by default", () => {
+  const buffer = makeArrayBuffer();
+  expect(JSON.stringify(buffer)).toBe("[10,20,30,40]");
+
+  const parsed = JSON.parse<ArrayBuffer>("[10,20,30,40]");
+  expect(JSON.stringify(parsed)).toBe(JSON.stringify(buffer));
+});
+
+describe("Should serialize empty and single-item typed buffers", () => {
+  expect(JSON.stringify(new Uint8Array(0))).toBe("[]");
+  expect(JSON.stringify(new ArrayBuffer(0))).toBe("[]");
+
+  const one = new Uint8Array(1);
+  one[0] = 255;
+  expect(JSON.stringify(one)).toBe("[255]");
+
+  const oneBuffer = new ArrayBuffer(1);
+  Uint8Array.wrap(oneBuffer)[0] = 42;
+  expect(JSON.stringify(oneBuffer)).toBe("[42]");
+});
+
+describe("Should serialize larger typed buffers deterministically", () => {
+  const bytes = makeRampUint8Array(16);
+  const raw = makeRampArrayBuffer(16);
+
+  expect(JSON.stringify(bytes)).toBe(
+    "[31,48,65,82,99,116,133,150,167,184,201,218,235,252,13,30]",
+  );
+  expect(JSON.stringify(raw)).toBe(
+    "[7,30,53,76,99,122,145,168,191,214,237,4,27,50,73,96]",
+  );
+
+  expect(JSON.stringify(JSON.parse<Uint8Array>(JSON.stringify(bytes)))).toBe(
+    JSON.stringify(bytes),
+  );
+  expect(JSON.stringify(JSON.parse<ArrayBuffer>(JSON.stringify(raw)))).toBe(
+    JSON.stringify(raw),
+  );
+});
+
+describe("Should deserialize undecorated typed-array subclasses with built-in behavior", () => {
+  const parsedBytes = JSON.parse<PlainBytes>("[10,20,30,40]");
+  expect((parsedBytes instanceof PlainBytes).toString()).toBe("true");
+  expect(JSON.stringify(parsedBytes)).toBe("[10,20,30,40]");
+
+  const parsedFloats = JSON.parse<PlainFloats>("[-1.5,0.125,3.14159]");
+  expect((parsedFloats instanceof PlainFloats).toString()).toBe("true");
+  expect(JSON.stringify(parsedFloats)).toBe("[-1.5,0.125,3.14159]");
+});
+
+describe("Should support typed arrays and ArrayBuffer inside @json classes", () => {
+  const input = new BinaryEnvelope();
+  const serialized = JSON.stringify(input);
+  expect(serialized).toBe(
+    '{"bytes":[0,1,2,255],"ints":[-32768,0,32767],"floats":[-1.5,0.25,3.75],"raw":[10,20,30,40]}',
+  );
+
+  const parsed = JSON.parse<BinaryEnvelope>(serialized);
+  expect(JSON.stringify(parsed)).toBe(serialized);
+  expect(JSON.stringify(parsed.bytes)).toBe(JSON.stringify(input.bytes));
+  expect(JSON.stringify(parsed.ints)).toBe(JSON.stringify(input.ints));
+  expect(JSON.stringify(parsed.floats)).toBe(JSON.stringify(input.floats));
+  expect(JSON.stringify(parsed.raw)).toBe(JSON.stringify(input.raw));
+});
+
+describe("Should serialize constructor-assigned typed arrays inside @json classes", () => {
+  const input = new BinaryEnvelopeCtor();
+  const serialized = JSON.stringify(input);
+  expect(serialized).toBe(
+    '{"bytes":[0,1,2,255],"ints":[-32768,0,32767],"floats":[-1.5,0.25,3.75]}',
+  );
+});
+
+describe("Should serialize nested classes with mixed typed-array field initialization styles", () => {
+  const input = new BinaryContainer();
+  const serialized = JSON.stringify(input);
+  expect(serialized).toBe(
+    '{"left":{"bytes":[0,1,2,255],"ints":[-32768,0,32767],"floats":[-1.5,0.25,3.75]},"right":{"bytes":[0,1,2,255],"ints":[-32768,0,32767],"floats":[-1.5,0.25,3.75],"raw":[10,20,30,40]}}',
+  );
+});
+
+describe("Should preserve bs state for typed-array and ArrayBuffer internal helpers", () => {
+  const encoded = JSON.internal.stringify(new BinaryEnvelope());
+  expect(encoded).toBe(
+    '{"bytes":[0,1,2,255],"ints":[-32768,0,32767],"floats":[-1.5,0.25,3.75],"raw":[10,20,30,40]}',
+  );
+
+  const parsed = JSON.internal.parse<BinaryEnvelope>(encoded);
+  expect(JSON.stringify(parsed)).toBe(encoded);
+  expect(JSON.stringify(parsed.raw)).toBe("[10,20,30,40]");
+});
+
+describe("Should support typed-array subclasses through JSON.__serialize and JSON.__deserialize", () => {
+  const bytes = new PlainBytes(4);
+  bytes[0] = 10;
+  bytes[1] = 20;
+  bytes[2] = 30;
+  bytes[3] = 40;
+
+  bs.offset = bs.buffer;
+  bs.stackSize = 0;
+  JSON.__serialize(bytes);
+  expect(bs.out<string>()).toBe("[10,20,30,40]");
+
+  const encodedBytes = "[10,20,30,40]";
+  const decodedBytes = JSON.__deserialize<PlainBytes>(
+    changetype<usize>(encodedBytes),
+    changetype<usize>(encodedBytes) + (encodedBytes.length << 1),
+    0,
+  );
+  expect((decodedBytes instanceof PlainBytes).toString()).toBe("true");
+  expect(JSON.stringify(decodedBytes)).toBe("[10,20,30,40]");
+
+  const encodedCustom = '"0a141e28"';
+  const decodedCustom = JSON.__deserialize<HexBytes>(
+    changetype<usize>(encodedCustom),
+    changetype<usize>(encodedCustom) + (encodedCustom.length << 1),
+    0,
+  );
+  expect((decodedCustom instanceof HexBytes).toString()).toBe("true");
+  expect(JSON.stringify(decodedCustom)).toBe(encodedCustom);
+});
+
+describe("Should preserve JSON.internal behavior for typed arrays and ArrayBuffer", () => {
+  const bytes = makeRampUint8Array(8);
+  const raw = makeRampArrayBuffer(8);
+
+  const encodedBytes = JSON.internal.stringify(bytes);
+  const encodedRaw = JSON.internal.stringify(raw);
+
+  expect(encodedBytes).toBe("[31,48,65,82,99,116,133,150]");
+  expect(encodedRaw).toBe("[7,30,53,76,99,122,145,168]");
+
+  const parsedBytes = JSON.internal.parse<Uint8Array>(encodedBytes);
+  const parsedRaw = JSON.internal.parse<ArrayBuffer>(encodedRaw);
+
+  expect(JSON.stringify(parsedBytes)).toBe(encodedBytes);
+  expect(JSON.stringify(parsedRaw)).toBe(encodedRaw);
+});
+
+describe("Should parse typed arrays and ArrayBuffer with whitespace", () => {
+  // Drives the SWAR Into/field path's whitespace handling and the NAIVE
+  // double-pass scanner - all three modes flow through here via the
+  // index dispatcher.
+  const ints = JSON.parse<Uint8Array>("[ 1 , 255 , 42 ]");
+  expect(ints.length).toBe(3);
+  expect(ints[0]).toBe(1);
+  expect(ints[2]).toBe(42);
+
+  const floats = JSON.parse<Float64Array>("[ 1.5 , -2.25 , 3.125 ]");
+  expect(floats.length).toBe(3);
+  expect(floats[0]).toBe(1.5);
+  expect(floats[2]).toBe(3.125);
+
+  const buffer = JSON.parse<ArrayBuffer>("[ 10 , 20 , 30 , 40 ]");
+  const view = Uint8Array.wrap(buffer);
+  expect(view.length).toBe(4);
+  expect(view[0]).toBe(10);
+  expect(view[3]).toBe(40);
+
+  expect(JSON.parse<Uint8Array>("[]").length).toBe(0);
+  expect(JSON.parse<ArrayBuffer>("[]").byteLength).toBe(0);
+});
+
+describe("Should drive JSON.Value typed-array and arbitrary serialization through JSON.stringify", () => {
+  // Each JSON.Value.from(...) below produces a JSON.Value of a different
+  // type; JSON.stringify routes each through the same serializer the
+  // dispatcher (and JSON.Value.toString) uses.
+  expect(JSON.stringify(JSON.Value.from<i32>(7))).toBe("7");
+  expect(JSON.stringify(makeArbitraryU8(255))).toBe("255");
+  expect(JSON.stringify(makeArbitraryU16(65535))).toBe("65535");
+  expect(JSON.stringify(makeArbitraryU32(4294967295))).toBe("4294967295");
+  expect(JSON.stringify(makeArbitraryU64(18446744073709551615))).toBe(
+    "18446744073709551615",
+  );
+  expect(JSON.stringify(JSON.Value.from<i32>(-12))).toBe("-12");
+  expect(JSON.stringify(makeArbitraryI8(-128))).toBe("-128");
+  expect(JSON.stringify(makeArbitraryI16(-32768))).toBe("-32768");
+  expect(JSON.stringify(makeArbitraryI64(-9223372036854775808))).toBe(
+    "-9223372036854775808",
+  );
+  expect(JSON.stringify(makeArbitraryF32(3.5))).toBe("3.5");
+  expect(JSON.stringify(JSON.Value.from<f64>(1.25))).toBe("1.25");
+  expect(JSON.stringify(JSON.Value.from<string>("x"))).toBe('"x"');
+  expect(JSON.stringify(JSON.Value.from<bool>(true))).toBe("true");
+
+  const arrValue = JSON.Value.from<JSON.Value[]>([
+    JSON.Value.from<i32>(1),
+    JSON.Value.from<string>("a"),
+  ]);
+  expect(JSON.stringify(arrValue)).toBe('[1,"a"]');
+
+  const obj = new JSON.Obj();
+  obj.set("n", 1);
+  expect(JSON.stringify(JSON.Value.from(obj))).toBe('{"n":1}');
+
+  const map = new Map<string, JSON.Value>();
+  map.set("ok", JSON.Value.from<i32>(1));
+  expect(JSON.stringify(JSON.Value.from(map))).toBe('{"ok":1}');
+
+  // TypedArray and ArrayBuffer carried inside JSON.Value go through
+  // serializeDynamic.
+  expect(JSON.stringify(JSON.Value.from(makeUint8Array()))).toBe("[0,1,2,255]");
+  expect(JSON.stringify(JSON.Value.from(makeArrayBuffer()))).toBe(
+    "[10,20,30,40]",
+  );
+
+  // Null primitive boxed in a JSON.Value.
+  expect(JSON.stringify(JSON.Value.from<JSON.Box<i32> | null>(null))).toBe(
+    "null",
+  );
+});
+
+// ─── TypedArray reuse paths ───────────────────────────────────────────────────
+
+describe("TypedArray: parse into non-empty pre-allocated buffer (reuse path)", () => {
+  const pre = new Uint8Array(8);
+  const result = JSON.parse<Uint8Array>("[1,2,3]", pre);
+  expect(result.length).toBe(3);
+  expect(result[0]).toBe(1);
+  expect(result[2]).toBe(3);
+});
+
+describe("ArrayBuffer: parse into non-empty pre-allocated buffer (reuse path)", () => {
+  const pre = new ArrayBuffer(8);
+  const result = JSON.parse<ArrayBuffer>("[10,20,30]", pre);
+  expect(result.byteLength).toBe(3);
+  expect(load<u8>(changetype<usize>(result))).toBe(10);
+});
+
+// ─── SWAR typedarray ─────────────────────────────────────────────────────────
+
+describe("SWAR: JSON.parse<Int32Array> parses integer array", () => {
+  const v = JSON.parse<Int32Array>("[1,2,3,4]");
+  expect(v.length).toBe(4);
+  expect(v[0]).toBe(1);
+  expect(v[3]).toBe(4);
+});
+
+describe("SWAR: JSON.parse<Int32Array> empty array returns length 0", () => {
+  const v = JSON.parse<Int32Array>("[]");
+  expect(v.length).toBe(0);
+});
+
+describe("SWAR: JSON.parse<Int32Array> negative values parse correctly", () => {
+  const v = JSON.parse<Int32Array>("[-1,-100,0,42]");
+  expect(v.length).toBe(4);
+  expect(v[0]).toBe(-1);
+  expect(v[1]).toBe(-100);
+  expect(v[3]).toBe(42);
+});
+
+describe("SWAR: JSON.parse<Float64Array> parses float array", () => {
+  const v = JSON.parse<Float64Array>("[1.5,2.5,3.5]");
+  expect(v.length).toBe(3);
+  expect(v[0]).toBe(1.5);
+  expect(v[2]).toBe(3.5);
+});
+
+describe("SWAR: JSON.parse<Float64Array> empty array returns length 0", () => {
+  const v = JSON.parse<Float64Array>("[]");
+  expect(v.length).toBe(0);
+});
+
+describe("SWAR: JSON.parse<Uint8Array> parses unsigned byte array", () => {
+  const v = JSON.parse<Uint8Array>("[0,128,255]");
+  expect(v.length).toBe(3);
+  expect(v[0]).toBe(0);
+  expect(v[1]).toBe(128);
+  expect(v[2]).toBe(255);
+});
+
+describe("SWAR: JSON.parse<ArrayBuffer> parses byte array", () => {
+  const v = JSON.parse<ArrayBuffer>("[72,101,108]");
+  expect(v.byteLength).toBe(3);
+});
+
+describe("SWAR: JSON.parse<ArrayBuffer> empty array returns byteLength 0", () => {
+  const v = JSON.parse<ArrayBuffer>("[]");
+  expect(v.byteLength).toBe(0);
+});
+
+describe("SWAR: JSON.parse<Int64Array> parses 64-bit integer array", () => {
+  const v = JSON.parse<Int64Array>("[1000000000000,-2,0]");
+  expect(v.length).toBe(3);
+  expect(v[0]).toBe(1000000000000);
+  expect(v[1]).toBe(-2);
+});
+
+// simple TAFieldHolder sanity check
+describe("TAFieldHolder basic round-trip", () => {
+  const h = JSON.parse<TAFieldHolder>('{"items":[1,2,3],"raw":[10,20]}');
+  const serialized = JSON.stringify(h);
+  expect(serialized).toBe('{"items":[1,2,3],"raw":[10,20]}');
+  expect(h.items.length).toBe(3);
+  expect(h.items[0]).toBe(1);
+  expect(h.items[2]).toBe(3);
+  expect(h.raw.byteLength).toBe(2);
+});
+
+// swar/typedarray.ts:78 IfBranch — reuse non-empty Int32Array field for empty array
+describe("SWAR TypedArray field: reuse non-empty field for [] triggers empty path (swar/typedarray.ts:78)", () => {
+  const h1 = JSON.parse<TAFieldHolder>('{"items":[1,2,3],"raw":[]}');
+  const h2 = JSON.parse<TAFieldHolder>('{"items":[],"raw":[]}', h1);
+  expect(h2.items.length).toBe(0);
+});
+
+// swar/typedarray.ts:87 Block — reuse Int32Array field with wrong length for non-empty array
+describe("SWAR TypedArray field: reuse wrong-size field for new array triggers resize (swar/typedarray.ts:87)", () => {
+  const h1 = JSON.parse<TAFieldHolder>('{"items":[1,2],"raw":[]}');
+  const h2 = JSON.parse<TAFieldHolder>(
+    '{"items":[10,20,30,40,50],"raw":[]}',
+    h1,
+  );
+  expect(h2.items.length).toBe(5);
+});
+
+// swar/typedarray.ts:178 IfBranch+Assignment — reuse non-empty ArrayBuffer field for empty array
+describe("SWAR ArrayBuffer field: reuse non-empty field for [] triggers empty path (swar/typedarray.ts:178)", () => {
+  const h1 = JSON.parse<TAFieldHolder>('{"items":[],"raw":[10,20,30]}');
+  const h2 = JSON.parse<TAFieldHolder>('{"items":[],"raw":[]}', h1);
+  expect(h2.raw.byteLength).toBe(0);
+});
+
+// swar/typedarray.ts:185+186 Block+Assignment — reuse wrong-size ArrayBuffer field for non-empty array
+describe("SWAR ArrayBuffer field: reuse wrong-size field for new array triggers resize (swar/typedarray.ts:185)", () => {
+  const h1 = JSON.parse<TAFieldHolder>('{"items":[],"raw":[1,2]}');
+  const h2 = JSON.parse<TAFieldHolder>(
+    '{"items":[],"raw":[10,20,30,40,50,60,70]}',
+    h1,
+  );
+  expect(h2.raw.byteLength).toBe(7);
+});

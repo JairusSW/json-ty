@@ -1,4 +1,4 @@
-import { JSON, alias, eager, json, lazy, omitnull, omitif, optional } from "json-ty";
+import { JSON, alias, deserializer, eager, json, lazy, omitnull, omitif, optional, serializer } from "json-ty";
 
 function observed(_value: object, _key: string | symbol): void {}
 
@@ -15,6 +15,45 @@ export class CompositeDefaults {
   position: Position = { x: 3, y: 4 };
   matrix: number[][] = [[5], [6, 7]];
 }
+
+@json
+export class HostCollections {
+  at!: Date;
+  counts!: Map<string, number>;
+  positions!: Map<string, Position>;
+  tags!: Set<string>;
+  bytes!: Uint8Array;
+  buffer!: ArrayBuffer;
+  score!: JSON.Box<number> | null;
+  payload!: JSON.Raw;
+  dynamic!: JSON.Value;
+}
+
+export const hostCollections = JSON.parse<HostCollections>(
+  '{"at":"1970-01-01T00:00:00.000Z","counts":{"a":1},"positions":{"home":{"x":3,"y":4}},"tags":["x"],"bytes":[1,2],"buffer":[3,4],"score":5,"payload":{"raw":true},"dynamic":[1,true]}',
+);
+export const dateValue = JSON.parse<Date>('"1970-01-01T00:00:00.000Z"');
+
+@json
+export class CustomPoint {
+  constructor(public x = 0, public y = 0) {}
+  @serializer("string")
+  encode(self: CustomPoint): string { return globalThis.JSON.stringify(`${self.x},${self.y}`); }
+  @deserializer("string")
+  decode(source: string): CustomPoint {
+    const [x, y] = (globalThis.JSON.parse(source) as string).split(",");
+    return new CustomPoint(Number(x), Number(y));
+  }
+}
+
+@json
+export class CustomHolder {
+  point!: CustomPoint;
+  nullable!: CustomPoint | null;
+}
+
+export const customPoint = JSON.parse<CustomPoint>('"1.5,-2.25"');
+export const customHolder = JSON.parse<CustomHolder>('{"point":"3,4","nullable":null}');
 
 @json({ lazy: "auto" })
 export class LazyAuto {

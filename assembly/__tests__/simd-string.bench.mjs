@@ -12,7 +12,7 @@ const { instance } = await WebAssembly.instantiate(wasmBytes, {
 const api = instance.exports;
 const bytes = new Uint8Array(api.memory.buffer);
 const encoder = new TextEncoder();
-const start = 1024;
+const start = 4096;
 const series = [
   ["strictAscii", `"${"abcdefghijklmno".repeat(2048)}"`, false],
   ["strictSparseEscapes", `"${"abcdefghijklmno\\n".repeat(1800)}"`, false],
@@ -42,9 +42,11 @@ for (const [name, source, trusted] of series) {
   const iterations = Math.max(2000, Math.floor(160_000_000 / payload.length));
   const simd = median("benchSimd", end, iterations, trusted);
   const swar = median("benchSwar", end, iterations, trusted);
-  if (simd.checksum !== swar.checksum) throw new Error(`${name} checksum mismatch`);
+  const lookup4 = median("benchLookup4", end, iterations, trusted);
+  if (simd.checksum !== swar.checksum || simd.checksum !== lookup4.checksum) throw new Error(`${name} checksum mismatch`);
   const simdNs = (simd.milliseconds * 1e6) / iterations;
   const swarNs = (swar.milliseconds * 1e6) / iterations;
+  const lookup4Ns = (lookup4.milliseconds * 1e6) / iterations;
   results.push({
     name,
     payloadBytes: payload.length,
@@ -52,6 +54,8 @@ for (const [name, source, trusted] of series) {
     swarNsPerString: Number(swarNs.toFixed(2)),
     gibPerSecond: Number((payload.length / simdNs).toFixed(3)),
     speedup: Number((swarNs / simdNs).toFixed(3)),
+    lookup4NsPerString: Number(lookup4Ns.toFixed(2)),
+    lookup4VsCurrent: Number((simdNs / lookup4Ns).toFixed(3)),
   });
 }
 

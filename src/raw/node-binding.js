@@ -17,6 +17,7 @@ const STATUS_MEMORY_EXHAUSTED = 3;
 const NUMBER_SCRATCH_SIZE = 128;
 
 const RAW_JSON = Symbol.for("json-ty.raw");
+const CUSTOM_CODEC = Symbol.for("json-ty.custom-codec");
 const RAW_ARRAY_OWNER = Symbol("json-ty.arrayOwner");
 const STRING_IS_WELL_FORMED = String.prototype.isWellFormed;
 const SURROGATE_PATTERN = /[\uD800-\uDFFF]/;
@@ -57,6 +58,248 @@ function rawJsonText(value) {
   return value.value;
 }
 
+class HostRawValue {
+  constructor(value) {
+    this.value = value;
+    this[RAW_JSON] = true;
+  }
+  toString() {
+    return this.value;
+  }
+  get data() {
+    return this.value;
+  }
+  set(value) {
+    JSON.parse(value);
+    this.value = value;
+  }
+}
+
+class HostBoxValue {
+  constructor(value) {
+    this.value = value;
+  }
+  set(value) {
+    this.value = value;
+    return this;
+  }
+  toString() {
+    return JSON.stringify(this.value);
+  }
+}
+
+const HOST_TYPED_ARRAYS = Object.freeze({
+  Int8Array: globalThis.Int8Array,
+  Uint8Array: globalThis.Uint8Array,
+  Uint8ClampedArray: globalThis.Uint8ClampedArray,
+  Int16Array: globalThis.Int16Array,
+  Uint16Array: globalThis.Uint16Array,
+  Int32Array: globalThis.Int32Array,
+  Uint32Array: globalThis.Uint32Array,
+  BigInt64Array: globalThis.BigInt64Array,
+  BigUint64Array: globalThis.BigUint64Array,
+  Float32Array: globalThis.Float32Array,
+  Float64Array: globalThis.Float64Array,
+});
+
+function decodeHostKey(type, key, registry) {
+  if (type.kind === "string") return key;
+  if (type.kind === "number") return Number(key);
+  if (type.kind === "boolean") return key === "true";
+  if (type.kind === "host" && type.codec.kind === "date") return new Date(JSON.parse(key));
+  return decodeHostWire(type, JSON.parse(key), registry);
+}
+
+function decodeHostWire(type, value, registry) {
+  if (type.kind === "host") {
+    const codec = type.codec;
+    if (codec.kind === "date") {
+      if (typeof value !== "string") throw new TypeError("Expected an ISO date string");
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) throw new RangeError(`Invalid Date ${JSON.stringify(value)}`);
+      return date;
+    }
+    if (codec.kind === "set") {
+      if (!Array.isArray(value)) throw new TypeError("Expected an array for Set");
+      return new Set(value.map((item) => decodeHostWire(codec.element, item, registry)));
+    }
+    if (codec.kind === "map") {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected an object for Map");
+      const map = new Map();
+      for (const key of Object.keys(value)) map.set(decodeHostKey(codec.key, key, registry), decodeHostWire(codec.value, value[key], registry));
+      return map;
+    }
+    if (codec.kind === "typed-array") {
+      if (!Array.isArray(value)) throw new TypeError(`Expected an array for ${codec.name}`);
+      const Constructor = HOST_TYPED_ARRAYS[codec.name];
+      if (typeof Constructor !== "function") throw new TypeError(`Unsupported typed array ${codec.name}`);
+      if (codec.name === "BigInt64Array" || codec.name === "BigUint64Array") return new Constructor(value.map(BigInt));
+      return new Constructor(value);
+    }
+    if (codec.kind === "array-buffer") {
+      if (!Array.isArray(value)) throw new TypeError("Expected an array for ArrayBuffer");
+      return Uint8Array.from(value).buffer;
+    }
+    if (codec.kind === "box") return new HostBoxValue(decodeHostWire(codec.value, value, registry));
+    if (codec.kind === "raw") return new HostRawValue(JSON.stringify(value));
+    if (codec.kind === "dynamic") return wrapHostDynamic(value);
+    if (codec.kind === "custom") {
+      validateCustomShape(codec, value);
+      const Constructor = registry?.get(codec.typeName)?.Class;
+      const method = Constructor?.prototype?.[codec.deserializer];
+      if (typeof method !== "function") throw new TypeError(`Custom deserializer ${codec.typeName}.${codec.deserializer} is unavailable`);
+      return method.call(Object.create(Constructor.prototype), JSON.stringify(value));
+    }
+    return value;
+  }
+  if (type.kind === "array") {
+    if (!Array.isArray(value)) throw new TypeError("Expected an array");
+    return value.map((item, index) => decodeHostWire(type.elements?.[index] ?? type.element, item, registry));
+  }
+  if (type.kind === "union") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Expected an object for discriminated union");
+    const variant = type.variants.find((item) => value[type.discriminator] === item.discriminatorValue);
+    if (!variant) throw new TypeError(`Unknown discriminated union variant ${JSON.stringify(value[type.discriminator])}`);
+    return decodeHostWire({ kind: "object", typeName: variant.typeName }, value, registry);
+  }
+  if (type.kind === "object") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`Expected an object for ${type.typeName}`);
+    const schema = registry?.get(type.typeName);
+    const Constructor = schema?.Class;
+    if (!schema) return Constructor ? Object.assign(Object.create(Constructor.prototype), value) : value;
+    const output = Constructor ? Object.create(Constructor.prototype) : {};
+    for (const field of schema.fields) {
+      if (field.decorators?.omit) continue;
+      const key = field.jsonName ?? field.name;
+      if (Object.hasOwn(value, key)) {
+        const item = value[key];
+        output[field.name] = item === null ? null : decodeHostWire(field.type ?? { kind: field.kind }, item, registry);
+      } else if (field.defaultValue !== undefined) output[field.name] = structuredClone(field.defaultValue);
+    }
+    return output;
+  }
+  return value;
+}
+
+function encodeHostKey(type, value, registry) {
+  if (type.kind === "string") return value;
+  if (type.kind === "number" || type.kind === "boolean") return String(value);
+  if (type.kind === "host" && type.codec.kind === "date") return JSON.stringify(value.toISOString());
+  return JSON.stringify(encodeHostWire(type, value, registry));
+}
+
+function encodeHostWire(type, value, registry) {
+  if (type.kind !== "host") {
+    if (type.kind === "array") return Array.from(value, (item, index) => encodeHostWire(type.elements?.[index] ?? type.element, item, registry));
+    if (type.kind === "union") {
+      const variant = type.variants.find((item) => value?.[type.discriminator] === item.discriminatorValue);
+      if (!variant) throw new TypeError(`Unknown discriminated union variant ${JSON.stringify(value?.[type.discriminator])}`);
+      return encodeHostWire({ kind: "object", typeName: variant.typeName }, value, registry);
+    }
+    if (type.kind === "object") {
+      if (value === null || typeof value !== "object") throw new TypeError(`Expected an object for ${type.typeName}`);
+      const schema = registry?.get(type.typeName);
+      if (!schema) return value;
+      const output = {};
+      for (const field of schema.fields) {
+        if (field.decorators?.omit) continue;
+        const item = value[field.name];
+        if (item === undefined || (item === null && field.decorators?.omitNull)) continue;
+        Object.defineProperty(output, field.jsonName ?? field.name, { value: item === null ? null : encodeHostWire(field.type ?? { kind: field.kind }, item, registry), enumerable: true, configurable: true });
+      }
+      return output;
+    }
+    return value;
+  }
+  const codec = type.codec;
+  if (codec.kind === "date") {
+    if (!(value instanceof Date)) throw new TypeError("Expected a Date");
+    return value.toISOString();
+  }
+  if (codec.kind === "set") {
+    if (!(value instanceof Set)) throw new TypeError("Expected a Set");
+    return Array.from(value, (item) => encodeHostWire(codec.element, item, registry));
+  }
+  if (codec.kind === "map") {
+    if (!(value instanceof Map)) throw new TypeError("Expected a Map");
+    const output = {};
+    for (const [key, item] of value) {
+      const name = encodeHostKey(codec.key, key, registry);
+      Object.defineProperty(output, name, { value: encodeHostWire(codec.value, item, registry), enumerable: true, configurable: true });
+    }
+    return output;
+  }
+  if (codec.kind === "typed-array") {
+    if (!ArrayBuffer.isView(value) || value instanceof DataView) throw new TypeError(`Expected a ${codec.name}`);
+    return Array.from(value, (item) => typeof item === "bigint" ? item.toString() : item);
+  }
+  if (codec.kind === "array-buffer") {
+    if (!(value instanceof ArrayBuffer)) throw new TypeError("Expected an ArrayBuffer");
+    return Array.from(new Uint8Array(value));
+  }
+  if (codec.kind === "box") return encodeHostWire(codec.value, value?.value, registry);
+  if (codec.kind === "raw") {
+    const raw = rawJsonText(value);
+    if (raw === undefined) throw new TypeError("Expected a JSON.Raw value");
+    return JSON.parse(raw);
+  }
+  if (codec.kind === "custom") {
+    const method = value?.[codec.serializer];
+    if (typeof method !== "function") throw new TypeError(`Expected ${codec.typeName} with custom serializer ${codec.serializer}`);
+    const encoded = method.call(value, value);
+    if (typeof encoded !== "string") throw new TypeError(`Custom serializer ${codec.typeName}.${codec.serializer} must return JSON text`);
+    const wire = JSON.parse(encoded);
+    validateCustomShape(codec, wire);
+    return wire;
+  }
+  return value?.toJS instanceof Function ? value.toJS() : value;
+}
+
+function validateCustomShape(codec, value) {
+  const actual = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  if (codec.shape !== "any" && actual !== codec.shape) throw new TypeError(`Expected custom ${codec.typeName} JSON shape ${codec.shape}, received ${actual}`);
+}
+
+function encodeHostJson(type, value, registry) {
+  if (type.kind === "array") {
+    if (!Array.isArray(value)) throw new TypeError("Expected an array");
+    return `[${value.map((item, index) => encodeHostJson(type.elements?.[index] ?? type.element, item, registry)).join(",")}]`;
+  }
+  if (type.kind === "host") {
+    const codec = type.codec;
+    if (codec.kind === "raw") {
+      const raw = rawJsonText(value);
+      if (raw === undefined) throw new TypeError("Expected a JSON.Raw value");
+      return raw;
+    }
+    if (codec.kind === "map") {
+      if (!(value instanceof Map)) throw new TypeError("Expected a Map");
+      const fields = [];
+      for (const [key, item] of value) {
+        fields.push(`${JSON.stringify(encodeHostKey(codec.key, key, registry))}:${encodeHostJson(codec.value, item, registry)}`);
+      }
+      return `{${fields.join(",")}}`;
+    }
+    if (codec.kind === "set") {
+      if (!(value instanceof Set)) throw new TypeError("Expected a Set");
+      return `[${Array.from(value, (item) => encodeHostJson(codec.element, item, registry)).join(",")}]`;
+    }
+    if (codec.kind === "box") return encodeHostJson(codec.value, value?.value, registry);
+    if (codec.kind === "dynamic" || codec.kind === "arbitrary") {
+      return stringifyJsonValue(value?.toJS instanceof Function ? value.toJS() : value);
+    }
+    if (codec.kind === "custom") {
+      const method = value?.[codec.serializer];
+      if (typeof method !== "function") throw new TypeError(`Expected ${codec.typeName} with custom serializer ${codec.serializer}`);
+      const encoded = method.call(value, value);
+      if (typeof encoded !== "string") throw new TypeError(`Custom serializer ${codec.typeName}.${codec.serializer} must return JSON text`);
+      validateCustomShape(codec, JSON.parse(encoded));
+      return encoded;
+    }
+  }
+  return JSON.stringify(encodeHostWire(type, value, registry));
+}
+
 /** Native-compatible basic stringify plus arbitrary JSON.Raw insertion. */
 function stringifyJsonValue(input) {
   const stack = new Set();
@@ -64,6 +307,15 @@ function stringifyJsonValue(input) {
     const directRaw = rawJsonText(original);
     if (directRaw !== undefined) return directRaw;
     let value = original;
+    const custom = value?.[CUSTOM_CODEC];
+    if (custom) {
+      const method = value?.[custom.serializer];
+      if (typeof method !== "function") throw new TypeError(`Custom serializer ${custom.typeName}.${custom.serializer} is unavailable`);
+      const encoded = method.call(value, value);
+      if (typeof encoded !== "string") throw new TypeError(`Custom serializer ${custom.typeName}.${custom.serializer} must return JSON text`);
+      validateCustomShape(custom, JSON.parse(encoded));
+      return encoded;
+    }
     if (value !== null && typeof value === "object" && typeof value.toJSON === "function") {
       value = value.toJSON(key);
       const convertedRaw = rawJsonText(value);
@@ -96,6 +348,110 @@ function stringifyJsonValue(input) {
     }
   };
   return visit(input, "", false);
+}
+
+function dynamicType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "object") return "object";
+  return typeof value === "boolean" || typeof value === "number" || typeof value === "string" ? typeof value : "invalid";
+}
+
+function unwrapDynamic(value) {
+  if (value instanceof DynamicValueView || value instanceof HostDynamicValue) return value.toJS();
+  if (value !== null && typeof value === "object" && typeof value.toJS === "function" && "type" in value) return value.toJS();
+  return value;
+}
+
+function wrapHostDynamic(value, invalidate) {
+  if (Array.isArray(value)) return new HostDynamicArray(value, invalidate);
+  if (value !== null && typeof value === "object") return new HostDynamicObject(value, invalidate);
+  return new HostDynamicValue(value, invalidate);
+}
+
+export class HostDynamicValue {
+  constructor(value, invalidate = undefined) {
+    this._value = value;
+    this._invalidate = invalidate;
+  }
+  get type() { return dynamicType(this._value); }
+  get value() { return this.type === "array" || this.type === "object" ? this : this._value; }
+  get() { return this.value; }
+  as() { return this; }
+  asBox() { return this._value === null ? null : new HostBoxValue(this._value); }
+  toJS() { return this._value; }
+  stringify() { return stringifyJsonValue(this._value); }
+  toString() { return this.stringify(); }
+  dispose() {}
+}
+
+export class HostDynamicArray extends HostDynamicValue {
+  get length() { return this._value.length; }
+  set length(value) { this._value.length = value; this._invalidate?.(); }
+  at(index) { const value = this._value.at(index); return value === undefined ? undefined : wrapHostDynamic(value, this._invalidate); }
+  getAs(index) { const value = this.at(index); if (value === undefined) throw new RangeError(`Index ${index} is out of bounds`); return value.get(); }
+  set(index, value) { this._value[index] = unwrapDynamic(value); this._invalidate?.(); return this; }
+  push(...values) { const result = this._value.push(...values.map(unwrapDynamic)); this._invalidate?.(); return result; }
+  pop() { const value = this._value.pop(); this._invalidate?.(); return value === undefined ? undefined : wrapHostDynamic(value, this._invalidate); }
+  shift() { const value = this._value.shift(); this._invalidate?.(); return value === undefined ? undefined : wrapHostDynamic(value, this._invalidate); }
+  unshift(...values) { const result = this._value.unshift(...values.map(unwrapDynamic)); this._invalidate?.(); return result; }
+  clear() { if (this._value.length !== 0) { this._value.length = 0; this._invalidate?.(); } return this; }
+  reverse() { this._value.reverse(); this._invalidate?.(); return this; }
+  fill(value, start, end) { this._value.fill(unwrapDynamic(value), start, end); this._invalidate?.(); return this; }
+  copyWithin(target, start, end) { this._value.copyWithin(target, start, end); this._invalidate?.(); return this; }
+  slice(start, end) { return new HostDynamicArray(this._value.slice(start, end)); }
+  splice(start, deleteCount, ...values) {
+    const removed = new HostDynamicArray(arguments.length === 1
+      ? this._value.splice(start)
+      : this._value.splice(start, deleteCount, ...values.map(unwrapDynamic)));
+    this._invalidate?.();
+    return removed;
+  }
+  concat(...values) { return new HostDynamicArray(this._value.concat(...values.map(unwrapDynamic))); }
+  indexOf(value, fromIndex) { return this._value.indexOf(unwrapDynamic(value), fromIndex); }
+  lastIndexOf(value, fromIndex) { return fromIndex === undefined ? this._value.lastIndexOf(unwrapDynamic(value)) : this._value.lastIndexOf(unwrapDynamic(value), fromIndex); }
+  includes(value, fromIndex) { return this._value.includes(unwrapDynamic(value), fromIndex); }
+  forEach(callback, thisArgument) { this._value.forEach((value, index) => callback.call(thisArgument, wrapHostDynamic(value, this._invalidate), index, this)); }
+  map(callback, thisArgument) { return new HostDynamicArray(this._value.map((value, index) => unwrapDynamic(callback.call(thisArgument, wrapHostDynamic(value, this._invalidate), index, this)))); }
+  filter(callback, thisArgument) { return new HostDynamicArray(this._value.filter((value, index) => callback.call(thisArgument, wrapHostDynamic(value, this._invalidate), index, this))); }
+  find(callback, thisArgument) { const value = this._value.find((item, index) => callback.call(thisArgument, wrapHostDynamic(item, this._invalidate), index, this)); return value === undefined ? undefined : wrapHostDynamic(value, this._invalidate); }
+  findIndex(callback, thisArgument) { return this._value.findIndex((value, index) => callback.call(thisArgument, wrapHostDynamic(value, this._invalidate), index, this)); }
+  findLast(callback, thisArgument) { const value = this._value.findLast((item, index) => callback.call(thisArgument, wrapHostDynamic(item, this._invalidate), index, this)); return value === undefined ? undefined : wrapHostDynamic(value, this._invalidate); }
+  findLastIndex(callback, thisArgument) { return this._value.findLastIndex((value, index) => callback.call(thisArgument, wrapHostDynamic(value, this._invalidate), index, this)); }
+  every(callback, thisArgument) { return this._value.every((value, index) => callback.call(thisArgument, wrapHostDynamic(value, this._invalidate), index, this)); }
+  some(callback, thisArgument) { return this._value.some((value, index) => callback.call(thisArgument, wrapHostDynamic(value, this._invalidate), index, this)); }
+  reduce(callback, initialValue) { return arguments.length > 1 ? this._value.reduce((accumulator, value, index) => callback(accumulator, wrapHostDynamic(value, this._invalidate), index, this), initialValue) : this._value.reduce((accumulator, value, index) => callback(accumulator, wrapHostDynamic(value, this._invalidate), index, this)); }
+  reduceRight(callback, initialValue) { return arguments.length > 1 ? this._value.reduceRight((accumulator, value, index) => callback(accumulator, wrapHostDynamic(value, this._invalidate), index, this), initialValue) : this._value.reduceRight((accumulator, value, index) => callback(accumulator, wrapHostDynamic(value, this._invalidate), index, this)); }
+  sort(compare) { this._value.sort(compare === undefined ? undefined : (left, right) => compare(wrapHostDynamic(left, this._invalidate), wrapHostDynamic(right, this._invalidate))); this._invalidate?.(); return this; }
+  join(separator) {
+    return this._value.map((value) => value === null || value === undefined
+      ? ""
+      : typeof value === "string"
+        ? value
+        : typeof value === "object"
+          ? stringifyJsonValue(value)
+          : String(value)).join(separator);
+  }
+  *values() { for (const value of this._value) yield wrapHostDynamic(value, this._invalidate); }
+  *keys() { yield* this._value.keys(); }
+  *entries() { for (let index = 0; index < this._value.length; index++) yield [index, wrapHostDynamic(this._value[index], this._invalidate)]; }
+  [Symbol.iterator]() { return this.values(); }
+  toArray() { return this._value; }
+}
+
+export class HostDynamicObject extends HostDynamicValue {
+  get size() { return Object.keys(this._value).length; }
+  set(key, value) { Object.defineProperty(this._value, key, { value: unwrapDynamic(value), writable: true, enumerable: true, configurable: true }); this._invalidate?.(); return this; }
+  get(key) { return arguments.length === 0 ? this : Object.hasOwn(this._value, key) ? wrapHostDynamic(this._value[key], this._invalidate) : undefined; }
+  getAs(key) { const value = this.get(key); if (value === undefined) throw new ReferenceError(`Missing JSON object key ${JSON.stringify(key)}`); return value.get(); }
+  has(key) { return Object.hasOwn(this._value, key); }
+  delete(key) { const removed = Object.hasOwn(this._value, key); if (removed) { delete this._value[key]; this._invalidate?.(); } return removed; }
+  clear() { for (const key of Object.keys(this._value)) delete this._value[key]; this._invalidate?.(); return this; }
+  *keys() { yield* Object.keys(this._value); }
+  *values() { for (const key of Object.keys(this._value)) yield wrapHostDynamic(this._value[key], this._invalidate); }
+  *entries() { for (const key of Object.keys(this._value)) yield [key, wrapHostDynamic(this._value[key], this._invalidate)]; }
+  [Symbol.iterator]() { return this.entries(); }
+  toObject() { return this._value; }
 }
 
 /**
@@ -139,10 +495,14 @@ function compilePlainStringifier(rootSchema) {
   };
 
   const compileType = (type) => {
+    if (type.kind === "host") return (value) => encodeHostJson(type, value, registry);
     if (type.kind === "object") {
       const nested = registry.get(type.typeName);
       if (!nested) throw new TypeError(`Missing schema ${type.typeName}`);
-      return compileRecord(nested);
+      const serializeRecord = compileRecord(nested);
+      return (value, stack) => value?.[CUSTOM_CODEC]
+        ? stringifyJsonValue(value)
+        : serializeRecord(value, stack);
     }
     if (type.kind === "union") {
       const variants = new Map(type.variants.map((variant) => {
@@ -207,7 +567,9 @@ function compilePlainStringifier(rootSchema) {
           if (fieldValue === undefined || typeof fieldValue === "function" || typeof fieldValue === "symbol") continue;
           if (fieldValue === null && plan.field.decorators?.omitNull) continue;
           if (plan.omitIf?.(value)) continue;
-          const encoded = plan.field.decorators?.raw ? rawJsonText(fieldValue) : plan.serialize(fieldValue, stack);
+          const encoded = fieldValue === null
+            ? "null"
+            : plan.field.decorators?.raw ? rawJsonText(fieldValue) : plan.serialize(fieldValue, stack);
           if (plan.field.decorators?.raw && encoded === undefined) throw new TypeError(`${plan.field.name} must be a JSON.Raw value`);
           if (encoded === undefined) continue;
           if (wrote) output += ",";
@@ -362,10 +724,12 @@ export class RawNodeBinding {
 
   parse(schema, input) {
     const stringInput = typeof input === "string";
+    if ((stringInput ? input.trim() : new TextDecoder().decode(input).trim()) === "null") return null;
     const trustedStringInput = stringInput;
     const rootSchema = schema.root !== undefined;
     const rootArray = schema.root === "array" || schema.root === "json-array";
-    const length = rootSchema ? this._writeRootValueInput(input) : this._writeInput(input, false, INPUT_JSON);
+    const rootInput = rootSchema && typeof input === "string" ? input.trim() : input;
+    const length = rootSchema ? this._writeRootValueInput(rootInput) : this._writeInput(input, false, INPUT_JSON);
     const parserKey = `${schema.name}:${trustedStringInput ? "trusted" : "strict"}`;
     let parse = this._lastParseSchema === schema && this._lastParseTrusted === trustedStringInput ? this._lastParser : (this._parsers.get(parserKey) ?? this._parsers.get(schema.name));
     if (parse === undefined || parse === null) {
@@ -393,6 +757,13 @@ export class RawNodeBinding {
     if (!rootSchema) return view;
     if (!rootArray) {
       const value = view.value;
+      if (value?.[RAW_RUNTIME] === this) {
+        Object.defineProperty(value, "dispose", {
+          configurable: true,
+          value: () => view.dispose(),
+        });
+        return value;
+      }
       view.dispose();
       return value;
     }
@@ -410,7 +781,19 @@ export class RawNodeBinding {
     return array;
   }
 
+  reuse(schema, target, next) {
+    if (target == null) return next;
+    if (schema.root !== undefined) return reuseDecodedValue(schema.fields[0].type, target, next, schema._registry);
+    return reuseDecodedValue({ kind: "object", typeName: schema.name }, target, next, schema._registry);
+  }
+
   parseDynamic(input, options = {}) {
+    const reuse = options instanceof DynamicValueView || options instanceof HostDynamicValue ? options : undefined;
+    const compatibleReuse = reuse === undefined && options !== null && typeof options === "object"
+      && typeof options.set === "function" && typeof options.toJS === "function" && "type" in options
+      ? options
+      : undefined;
+    if (reuse || compatibleReuse) options = { plain: true };
     if (options.trusted !== undefined) {
       throw new TypeError("parseDynamic trusted input is unsupported; validation is mandatory");
     }
@@ -423,7 +806,7 @@ export class RawNodeBinding {
     const trustedInput = stringInput;
     // Plain values consume the complete graph immediately, so building it in
     // the parsing pass avoids deferred-container calls during materialization.
-    const retained = options.plain !== true && options.eager === false;
+    const retained = options.plain !== true && options.eager !== true;
     if (retained && typeof this._parseDynamicRetained !== "function") {
       throw new Error("Retained dynamic JSON was not compiled into this runtime");
     }
@@ -448,7 +831,25 @@ export class RawNodeBinding {
     const state = { document, ownsDocument: true };
     if (options.plain === true) {
       try {
-        return dynamicSlotToJS(this, state, root, asciiSource);
+        const plain = dynamicSlotToJS(this, state, root, asciiSource);
+        if (reuse instanceof HostDynamicValue) {
+          reuse._value = plain;
+          reuse._invalidate?.();
+          return reuse;
+        }
+        if (reuse instanceof DynamicValueView) {
+          if (reuse.state.ownsDocument && reuse.state.document !== 0) this.release(reuse.state.document);
+          reuse.state.document = 0;
+          reuse.state.hostRoot = plain;
+          reuse.state.hostValues = new Map([[reuse.slot, plain]]);
+          reuse.state.serialized = undefined;
+          return reuse;
+        }
+        if (compatibleReuse) {
+          compatibleReuse.set(plain);
+          return compatibleReuse;
+        }
+        return plain;
       } finally {
         this.release(document);
         state.document = 0;
@@ -460,9 +861,15 @@ export class RawNodeBinding {
 
   stringifyDynamic(value) {
     if (!(value instanceof DynamicValueView) || value.runtime !== this) {
-      return stringifyJsonValue(value);
+      return stringifyJsonValue(value?.toJS instanceof Function ? value.toJS() : value);
+    }
+    if (value.state.hostRoot !== undefined) {
+      if (value.state.serialized === undefined) value.state.serialized = stringifyJsonValue(value.state.hostRoot);
+      return value.state.serialized;
     }
     const document = value._document();
+    const root = document + this.u32[(document + 12) >>> 2];
+    if (value.slot !== root) return stringifyJsonValue(value.toJS());
     if (value.state.serialized !== undefined) return value.state.serialized;
     const capacity = this.scratchCapacity - NUMBER_SCRATCH_SIZE;
     this._invalidateScratchInput();
@@ -479,6 +886,7 @@ export class RawNodeBinding {
   }
 
   stringify(schema, value) {
+    if (value === null) return "null";
     if (schema.root !== undefined) {
       if (schema.root === "array" || schema.root === "json-array") {
         if (!Array.isArray(value) && !(value instanceof JsonArrayView)) {
@@ -593,19 +1001,21 @@ export class RawNodeBinding {
       const arrayValue = Array.isArray(inputArray) ? inputArray : inputArray instanceof JsonArrayView ? inputArray.toArray() : null;
       if (arrayValue === null) throw new TypeError("Expected an array");
       const element = type.element;
-      const stride = type.elements ? 16 : element.kind === "number" || element.kind === "string" || element.kind === "union" || element.kind === "array" ? 8 : 4;
+      const stride = type.elements ? 16 : element.kind === "number" || element.kind === "string" || element.kind === "host" || element.kind === "union" || element.kind === "array" ? 8 : 4;
       if (type.elements && arrayValue.length !== type.elements.length) {
         throw new TypeError(`Expected a tuple of length ${type.elements.length}`);
       }
       const header = allocate(16, 8);
       const data = allocate(arrayValue.length * stride, Math.min(stride, 8));
-      this.u32[header >>> 2] = element.kind === "null" ? 0 : element.kind === "number" ? 1 : element.kind === "boolean" ? 2 : element.kind === "string" ? 3 : element.kind === "object" ? 4 : 5;
+      this.u32[header >>> 2] = element.kind === "null" ? 0 : element.kind === "number" ? 1 : element.kind === "boolean" ? 2 : element.kind === "string" ? 3 : element.kind === "object" ? 4 : element.kind === "host" ? 6 : 5;
       this.u32[(header + 4) >>> 2] = arrayValue.length;
       this.u32[(header + 8) >>> 2] = data - document;
       this.u32[(header + 12) >>> 2] = stride;
       this.u32[destination >>> 2] = header - document;
       this.u32[(destination + 4) >>> 2] = arrayValue.length;
       for (let index = 0; index < arrayValue.length; index++) {
+        const nullable = type.elements ? type.elementsNullable?.[index] : type.elementNullable;
+        if (nullable && arrayValue[index] === null) continue;
         lowerValue(type.elements?.[index] ?? element, arrayValue[index], data + index * stride, `array element ${index}`);
       }
     };
@@ -621,6 +1031,13 @@ export class RawNodeBinding {
         this.u32[destination >>> 2] = fieldValue ? 1 : 0;
       } else if (type.kind === "string") {
         lowerString(destination, fieldValue);
+      } else if (type.kind === "host") {
+        const encoded = encodeHostJson(type, fieldValue, registry);
+        const length = this._byteLength(encoded);
+        const pointer = allocate(length, 1);
+        this._writeUtf8(encoded, pointer, length);
+        this.u32[destination >>> 2] = pointer - document;
+        this.u32[(destination + 4) >>> 2] = length;
       } else if (type.kind === "object") {
         const nestedSchema = registry.get(type.typeName);
         if (!nestedSchema) throw new Error(`Missing schema ${type.typeName}`);
@@ -680,6 +1097,7 @@ export class RawNodeBinding {
     if (value === null || typeof value !== "object") {
       throw new TypeError(`Expected an object for ${schema.name}`);
     }
+    if (value?.[CUSTOM_CODEC]) return stringifyJsonValue(value);
     let compiled = schema._plainStringifier;
     if (compiled !== undefined) return compiled(value);
     if (schema.nativeStringifyCompatible && value?.[RAW_RUNTIME] === undefined) return JSON.stringify(value);
@@ -742,6 +1160,148 @@ export function decodeStringRef(runtime, document, pointer, asciiSource) {
   return escaped ? decodeEscapedJsonString(raw) : raw;
 }
 
+function decodeRawRef(runtime, document, pointer) {
+  const offset = runtime.u32[pointer >>> 2];
+  const length = runtime.u32[(pointer + 4) >>> 2] & 0x3fffffff;
+  return runtime._decodeUtf8(document + offset, document + offset + length);
+}
+
+function rawJsonValueEnd(source, start) {
+  let index = start;
+  while (index < source.length && /\s/.test(source[index])) index++;
+  if (source[index] === '"') {
+    for (index++; index < source.length; index++) {
+      if (source[index] === "\\") index++;
+      else if (source[index] === '"') return index + 1;
+    }
+    throw new SyntaxError("Unterminated JSON string");
+  }
+  if (source[index] === "{" || source[index] === "[") {
+    const opening = source[index++];
+    const closing = opening === "{" ? "}" : "]";
+    let depth = 1;
+    let string = false;
+    for (; index < source.length; index++) {
+      const character = source[index];
+      if (string) {
+        if (character === "\\") index++;
+        else if (character === '"') string = false;
+      } else if (character === '"') string = true;
+      else if (character === opening) depth++;
+      else if (character === closing && --depth === 0) return index + 1;
+    }
+    throw new SyntaxError("Unterminated JSON container");
+  }
+  while (index < source.length && source[index] !== "," && source[index] !== "]" && source[index] !== "}" && !/\s/.test(source[index])) index++;
+  return index;
+}
+
+function rawJsonEntries(source, object) {
+  const entries = [];
+  let index = 1;
+  while (index < source.length - 1) {
+    while (/\s/.test(source[index])) index++;
+    if (source[index] === (object ? "}" : "]")) break;
+    let key;
+    if (object) {
+      const keyEnd = rawJsonValueEnd(source, index);
+      key = JSON.parse(source.slice(index, keyEnd));
+      index = keyEnd;
+      while (/\s/.test(source[index])) index++;
+      if (source[index++] !== ":") throw new SyntaxError("Expected ':' in JSON object");
+    }
+    const valueStart = index;
+    const valueEnd = rawJsonValueEnd(source, valueStart);
+    entries.push([key, source.slice(valueStart, valueEnd).trim()]);
+    index = valueEnd;
+    while (/\s/.test(source[index])) index++;
+    if (source[index] === ",") index++;
+    else if (source[index] !== (object ? "}" : "]")) throw new SyntaxError("Expected ',' in JSON container");
+  }
+  return entries;
+}
+
+function decodeHostJson(type, raw, registry) {
+  if (type.kind === "host") {
+    const codec = type.codec;
+    if (codec.kind === "raw") return new HostRawValue(raw.trim());
+    if (codec.kind === "map") {
+      const map = new Map();
+      for (const [key, value] of rawJsonEntries(raw.trim(), true)) {
+        map.set(decodeHostKey(codec.key, key, registry), decodeHostJson(codec.value, value, registry));
+      }
+      return map;
+    }
+    if (codec.kind === "set") {
+      return new Set(rawJsonEntries(raw.trim(), false).map(([, value]) => decodeHostJson(codec.element, value, registry)));
+    }
+  }
+  if (type.kind === "array") {
+    return rawJsonEntries(raw.trim(), false).map(([, value], index) => decodeHostJson(type.elements?.[index] ?? type.element, value, registry));
+  }
+  return decodeHostWire(type, JSON.parse(raw), registry);
+}
+
+function reuseDecodedValue(type, target, next, registry) {
+  if (target == null || next == null) return next;
+  if (type.kind === "host") {
+    const codec = type.codec;
+    if (codec.kind === "raw" && typeof target.set === "function") {
+      target.set(next.data);
+      return target;
+    }
+    if (codec.kind === "map" && target instanceof Map && next instanceof Map) {
+      const renewed = [];
+      for (const [key, value] of next) {
+        renewed.push([key, target.has(key) ? reuseDecodedValue(codec.value, target.get(key), value, registry) : value]);
+      }
+      target.clear();
+      for (const [key, value] of renewed) target.set(key, value);
+      return target;
+    }
+    if (codec.kind === "set" && target instanceof Set && next instanceof Set) {
+      target.clear();
+      for (const value of next) target.add(value);
+      return target;
+    }
+    if (codec.kind === "date" && target instanceof Date && next instanceof Date) {
+      target.setTime(next.getTime());
+      return target;
+    }
+    if (codec.kind === "box" && "value" in target) {
+      target.value = reuseDecodedValue(codec.value, target.value, next.value, registry);
+      return target;
+    }
+    return next;
+  }
+  if (type.kind === "array" && Array.isArray(target) && Array.isArray(next)) {
+    const length = next.length;
+    for (let index = 0; index < length; index++) {
+      target[index] = index < target.length
+        ? reuseDecodedValue(type.elements?.[index] ?? type.element, target[index], next[index], registry)
+        : next[index];
+    }
+    target.length = length;
+    return target;
+  }
+  if (type.kind === "object" && typeof target === "object" && typeof next === "object") {
+    const schema = registry?.get(type.typeName);
+    if (!schema) return Object.assign(target, next);
+    for (const field of schema.fields) {
+      if (field.name in next) {
+        target[field.name] = reuseDecodedValue(field.type ?? { kind: field.kind }, target[field.name], next[field.name], registry);
+      } else delete target[field.name];
+    }
+    return target;
+  }
+  return next;
+}
+
+function readHostRef(runtime, schema, document, pointer, type) {
+  const raw = decodeRawRef(runtime, document, pointer);
+  return decodeHostJson(type, raw, schema._registry);
+}
+
 function decodeEscapedJsonString(raw) {
   let slash = raw.indexOf("\\");
   if (slash < 0) return raw;
@@ -792,12 +1352,15 @@ function readArrayElement(view, type, header, index) {
   const stride = runtime.u32[(header + 12) >>> 2];
   const element = type.elements?.[index] ?? type.element;
   const pointer = data + index * stride;
+  const nullable = type.elements ? type.elementsNullable?.[index] : type.elementNullable;
+  if (nullable && runtime.u32[pointer >>> 2] === 0 && (stride === 4 || runtime.u32[(pointer + 4) >>> 2] === 0)) return null;
   if (element.kind === "null") return null;
   if (element.kind === "number") return runtime.f64[pointer >>> 3];
   if (element.kind === "boolean") return runtime.u32[pointer >>> 2] !== 0;
   if (element.kind === "string") {
     return decodeStringRef(runtime, document, pointer, view[RAW_ASCII_SOURCE]);
   }
+  if (element.kind === "host") return readHostRef(runtime, view[RAW_SCHEMA], document, pointer, element);
   if (element.kind === "object") {
     const nestedSchema = view[RAW_SCHEMA]._registry.get(element.typeName);
     const nestedRoot = document + runtime.u32[pointer >>> 2];
@@ -861,6 +1424,7 @@ function readHostManagedField(view, field) {
   if (type.kind === "string") {
     return decodeStringRef(runtime, document, root + field.offset, view[RAW_ASCII_SOURCE]);
   }
+  if (type.kind === "host") return readHostRef(runtime, schema, document, root + field.offset, type);
   if (type.kind === "array") {
     return materializeArray(view, type, document + runtime.u32[(root + field.offset) >>> 2]);
   }
@@ -931,6 +1495,10 @@ const DYNAMIC_ENTRY_NEXT_OFFSET = 8;
 const DYNAMIC_ENTRY_SLOT_OFFSET = 12;
 
 function dynamicView(runtime, state, slot, asciiSource) {
+  let views = state.views;
+  if (views === undefined) state.views = views = new Map();
+  const cached = views.get(slot);
+  if (cached !== undefined) return cached;
   let tag = runtime.u32[slot >>> 2];
   if (tag === DYNAMIC_LAZY_ARRAY || tag === DYNAMIC_LAZY_OBJECT) {
     tag = runtime._callWithMemoryRefresh(runtime._materializeDynamic, state.document, slot) >>> 0;
@@ -938,9 +1506,13 @@ function dynamicView(runtime, state, slot, asciiSource) {
       throw new SyntaxError(`Deferred dynamic JSON failed to materialize at byte ${runtime._result(4)}`);
     }
   }
-  if (tag === DYNAMIC_ARRAY) return new DynamicArrayView(runtime, state, slot, asciiSource);
-  if (tag === DYNAMIC_OBJECT) return new DynamicObjectView(runtime, state, slot, asciiSource);
-  return new DynamicValueView(runtime, state, slot, asciiSource);
+  const view = tag === DYNAMIC_ARRAY
+    ? new DynamicArrayView(runtime, state, slot, asciiSource)
+    : tag === DYNAMIC_OBJECT
+      ? new DynamicObjectView(runtime, state, slot, asciiSource)
+      : new DynamicValueView(runtime, state, slot, asciiSource);
+  views.set(slot, view);
+  return view;
 }
 
 function dynamicSlotToJS(runtime, state, slot, asciiSource) {
@@ -995,6 +1567,62 @@ function dynamicSlotToJS(runtime, state, slot, asciiSource) {
   throw new SyntaxError(`Unknown dynamic JSON tag ${tag}`);
 }
 
+function dynamicSlotToJSMapped(runtime, state, slot, asciiSource, slots) {
+  const document = state.document;
+  if (document === 0) throw new ReferenceError("Cannot read a released dynamic JSON view");
+  let tag = runtime.u32[slot >>> 2];
+  if (tag === DYNAMIC_LAZY_ARRAY || tag === DYNAMIC_LAZY_OBJECT) {
+    tag = runtime._callWithMemoryRefresh(runtime._materializeDynamic, document, slot) >>> 0;
+    if (tag === 0) throw new SyntaxError(`Deferred dynamic JSON failed to materialize at byte ${runtime._result(4)}`);
+  }
+  let result;
+  if (tag === DYNAMIC_NULL) result = null;
+  else if (tag === DYNAMIC_BOOLEAN) result = runtime.u32[(slot + DYNAMIC_SLOT_PAYLOAD_OFFSET) >>> 2] !== 0;
+  else if (tag === DYNAMIC_NUMBER) result = runtime.f64[(slot + DYNAMIC_SLOT_PAYLOAD_OFFSET) >>> 3];
+  else if (tag === DYNAMIC_STRING) result = decodeStringRef(runtime, document, slot + DYNAMIC_SLOT_PAYLOAD_OFFSET, asciiSource);
+  else {
+    const header = document + runtime.u32[(slot + DYNAMIC_SLOT_PAYLOAD_OFFSET) >>> 2];
+    const length = runtime.u32[header >>> 2];
+    let entry = document + runtime.u32[(header + 4) >>> 2];
+    if (tag === DYNAMIC_ARRAY) {
+      result = new Array(length);
+      slots.set(slot, result);
+      for (let index = 0; index < length; index++) {
+        result[index] = dynamicSlotToJSMapped(runtime, state, entry + DYNAMIC_ARRAY_SLOT_OFFSET, asciiSource, slots);
+        entry = document + runtime.u32[entry >>> 2];
+      }
+      return result;
+    }
+    if (tag !== DYNAMIC_OBJECT) throw new SyntaxError(`Unknown dynamic JSON tag ${tag}`);
+    result = {};
+    slots.set(slot, result);
+    for (let index = 0; index < length; index++) {
+      const key = decodeStringRef(runtime, document, entry, asciiSource);
+      const value = dynamicSlotToJSMapped(runtime, state, entry + DYNAMIC_ENTRY_SLOT_OFFSET, asciiSource, slots);
+      Object.defineProperty(result, key, { value, writable: true, enumerable: true, configurable: true });
+      entry = document + runtime.u32[(entry + DYNAMIC_ENTRY_NEXT_OFFSET) >>> 2];
+    }
+    return result;
+  }
+  slots.set(slot, result);
+  return result;
+}
+
+function ensureDynamicHostState(view) {
+  if (view.state.hostRoot === undefined) {
+    const document = view._document();
+    const root = document + view.runtime.u32[(document + 12) >>> 2];
+    view.state.hostValues = new Map();
+    view.state.hostRoot = dynamicSlotToJSMapped(view.runtime, view.state, root, view.asciiSource, view.state.hostValues);
+  }
+  return view.state.hostValues.get(view.slot);
+}
+
+function retainedHostView(view) {
+  const invalidate = () => { view.state.serialized = undefined; };
+  return wrapHostDynamic(ensureDynamicHostState(view), invalidate);
+}
+
 function dynamicTreeToJS(runtime, state, slot, asciiSource) {
   if (runtime._callWithMemoryRefresh(runtime._materializeDynamicTree, state.document, slot) >>> 0 === 0) {
     throw new SyntaxError(`Dynamic JSON tree failed to materialize at byte ${runtime._result(4)}`);
@@ -1016,11 +1644,21 @@ export class DynamicValueView {
   }
 
   get type() {
+    if (this.state.hostRoot !== undefined) return dynamicType(this.state.hostValues.get(this.slot));
     const tags = ["null", "boolean", "number", "string", "array", "object"];
-    return tags[this.runtime.u32[this.slot >>> 2]] ?? "invalid";
+    let tag = this.runtime.u32[this.slot >>> 2];
+    if (tag === DYNAMIC_LAZY_ARRAY || tag === DYNAMIC_LAZY_OBJECT) {
+      tag = this.runtime._callWithMemoryRefresh(this.runtime._materializeDynamic, this._document(), this.slot) >>> 0;
+      if (tag === 0) throw new SyntaxError(`Deferred dynamic JSON failed to materialize at byte ${this.runtime._result(4)}`);
+    }
+    return tags[tag] ?? "invalid";
   }
 
   get value() {
+    if (this.state.hostRoot !== undefined) {
+      const value = this.state.hostValues.get(this.slot);
+      return value !== null && typeof value === "object" ? this : value;
+    }
     const document = this._document();
     const tag = this.runtime.u32[this.slot >>> 2];
     if (tag === DYNAMIC_NULL) return null;
@@ -1033,12 +1671,21 @@ export class DynamicValueView {
   }
 
   toJS() {
+    if (this.state.hostRoot !== undefined) return this.state.hostValues.get(this.slot);
     return dynamicTreeToJS(this.runtime, this.state, this.slot, this.asciiSource);
   }
+
+  get() { return this.value; }
+
+  as() { return this; }
+
+  asBox() { const value = this.toJS(); return value === null ? null : new HostBoxValue(value); }
 
   stringify() {
     return this.runtime.stringifyDynamic(this);
   }
+
+  toString() { return this.stringify(); }
 
   dispose() {
     const document = this.state.document;
@@ -1057,8 +1704,11 @@ export class DynamicArrayView extends DynamicValueView {
   }
 
   get length() {
+    if (this.state.hostRoot !== undefined) return this.state.hostValues.get(this.slot).length;
     return this.runtime.u32[this._header() >>> 2];
   }
+
+  set length(value) { retainedHostView(this).length = value; }
 
   _entry(index) {
     if (this._entryOffsets === undefined) {
@@ -1076,10 +1726,42 @@ export class DynamicArrayView extends DynamicValueView {
   }
 
   at(index) {
+    if (this.state.hostRoot !== undefined) return retainedHostView(this).at(index);
     const normalized = index < 0 ? this.length + index : index;
     if (normalized < 0 || normalized >= this.length) return undefined;
     return dynamicView(this.runtime, this.state, this._entry(normalized) + DYNAMIC_ARRAY_SLOT_OFFSET, this.asciiSource);
   }
+
+
+  getAs(index) { const value = this.at(index); if (value === undefined) throw new RangeError(`Index ${index} is out of bounds`); return value.get(); }
+  set(index, value) { retainedHostView(this).set(index, value); return this; }
+  push(...values) { return retainedHostView(this).push(...values); }
+  pop() { return retainedHostView(this).pop(); }
+  shift() { return retainedHostView(this).shift(); }
+  unshift(...values) { return retainedHostView(this).unshift(...values); }
+  clear() { retainedHostView(this).clear(); return this; }
+  reverse() { retainedHostView(this).reverse(); return this; }
+  fill(value, start, end) { retainedHostView(this).fill(value, start, end); return this; }
+  copyWithin(target, start, end) { retainedHostView(this).copyWithin(target, start, end); return this; }
+  slice(start, end) { return retainedHostView(this).slice(start, end); }
+  splice(start, deleteCount, ...values) { return arguments.length === 1 ? retainedHostView(this).splice(start) : retainedHostView(this).splice(start, deleteCount, ...values); }
+  concat(...values) { return retainedHostView(this).concat(...values); }
+  indexOf(value, fromIndex) { return retainedHostView(this).indexOf(value, fromIndex); }
+  lastIndexOf(value, fromIndex) { return retainedHostView(this).lastIndexOf(value, fromIndex); }
+  includes(value, fromIndex) { return retainedHostView(this).includes(value, fromIndex); }
+  forEach(callback, thisArgument) { return retainedHostView(this).forEach(callback, thisArgument); }
+  map(callback, thisArgument) { return retainedHostView(this).map(callback, thisArgument); }
+  filter(callback, thisArgument) { return retainedHostView(this).filter(callback, thisArgument); }
+  find(callback, thisArgument) { return retainedHostView(this).find(callback, thisArgument); }
+  findIndex(callback, thisArgument) { return retainedHostView(this).findIndex(callback, thisArgument); }
+  findLast(callback, thisArgument) { return retainedHostView(this).findLast(callback, thisArgument); }
+  findLastIndex(callback, thisArgument) { return retainedHostView(this).findLastIndex(callback, thisArgument); }
+  every(callback, thisArgument) { return retainedHostView(this).every(callback, thisArgument); }
+  some(callback, thisArgument) { return retainedHostView(this).some(callback, thisArgument); }
+  reduce(callback, initialValue) { return arguments.length > 1 ? retainedHostView(this).reduce(callback, initialValue) : retainedHostView(this).reduce(callback); }
+  reduceRight(callback, initialValue) { return arguments.length > 1 ? retainedHostView(this).reduceRight(callback, initialValue) : retainedHostView(this).reduceRight(callback); }
+  sort(compare) { retainedHostView(this).sort(compare); return this; }
+  join(separator) { return retainedHostView(this).join(separator); }
 
   *values() {
     for (let index = 0; index < this.length; index++) yield this.at(index);
@@ -1090,6 +1772,7 @@ export class DynamicArrayView extends DynamicValueView {
   }
 
   toArray() {
+    if (this.state.hostRoot !== undefined) return this.state.hostValues.get(this.slot);
     return dynamicTreeToJS(this.runtime, this.state, this.slot, this.asciiSource);
   }
 
@@ -1105,6 +1788,7 @@ export class DynamicObjectView extends DynamicValueView {
   }
 
   get size() {
+    if (this.state.hostRoot !== undefined) return Object.keys(this.state.hostValues.get(this.slot)).length;
     return this.runtime.u32[this._header() >>> 2];
   }
 
@@ -1135,6 +1819,8 @@ export class DynamicObjectView extends DynamicValueView {
   }
 
   get(key) {
+    if (arguments.length === 0) return this;
+    if (this.state.hostRoot !== undefined) return retainedHostView(this).get(key);
     this._buildIndex();
     if (this.index !== undefined) {
       const position = this.index.get(key);
@@ -1148,21 +1834,33 @@ export class DynamicObjectView extends DynamicValueView {
     return undefined;
   }
 
+  getAs(key) { const value = this.get(key); if (value === undefined) throw new ReferenceError(`Missing JSON object key ${JSON.stringify(key)}`); return value.get(); }
+  set(key, value) { retainedHostView(this).set(key, value); return this; }
+
   has(key) {
     return this.get(key) !== undefined;
   }
 
+  delete(key) { return retainedHostView(this).delete(key); }
+  clear() { retainedHostView(this).clear(); return this; }
+
   *keys() {
+    if (this.state.hostRoot !== undefined) { yield* Object.keys(this.state.hostValues.get(this.slot)); return; }
     for (let position = 0; position < this.size; position++) yield this._key(position);
   }
 
   *entries() {
+    if (this.state.hostRoot !== undefined) { yield* retainedHostView(this).entries(); return; }
     for (let position = 0; position < this.size; position++) {
       yield [this._key(position), dynamicView(this.runtime, this.state, this._entry(position) + DYNAMIC_ENTRY_SLOT_OFFSET, this.asciiSource)];
     }
   }
 
+  *values() { for (const [, value] of this.entries()) yield value; }
+  [Symbol.iterator]() { return this.entries(); }
+
   toObject() {
+    if (this.state.hostRoot !== undefined) return this.state.hostValues.get(this.slot);
     return dynamicTreeToJS(this.runtime, this.state, this.slot, this.asciiSource);
   }
 
@@ -1216,6 +1914,20 @@ export function readGeneratedComposite(view, schema, field, cache) {
   return value;
 }
 
+export function readGeneratedHost(view, field) {
+  const runtime = view[RAW_RUNTIME];
+  const document = activeDocument(view, "read");
+  const root = view[RAW_ROOT];
+  const value = readHostRef(runtime, view[RAW_SCHEMA], document, root + field.offset, field.type ?? { kind: field.kind });
+  // Host values (Date, Map, Set, typed arrays, custom classes, dynamic
+  // facades) are mutable without going through the generated field setter.
+  // Once exposed, conservatively route serialization through the lowerer so
+  // those in-place mutations cannot be hidden by source-span pass-through.
+  runtime._dirtyDocuments.add(document);
+  invalidateSerialization(view);
+  return value;
+}
+
 export function writeGeneratedField(view, schema, field, value) {
   activeDocument(view, "write");
   if (value === null && !field.nullable && field.kind !== "null") throw new TypeError(`${field.name} is not nullable`);
@@ -1255,7 +1967,7 @@ export function createObjectView(schema, classPrototype = undefined) {
     if (field.hostManaged && classPrototype !== undefined) continue;
     const bitmapByte = fieldBitmapByte(field);
     const mask = fieldBitmapMask(field);
-    const cache = field.kind === "string" || field.kind === "object" || field.kind === "array" || field.kind === "union" ? Symbol(field.name) : undefined;
+    const cache = field.kind === "string" || field.kind === "object" || field.kind === "array" || field.kind === "union" || field.kind === "host" ? Symbol(field.name) : undefined;
     let get;
     if (field.kind === "null") {
       const read = function (view) {
@@ -1348,7 +2060,7 @@ export function createSchemaRegistry(layouts, options = {}) {
   for (const schema of registry.values()) {
     Object.defineProperty(schema, "_registry", { value: registry });
     Object.defineProperty(schema, "requiresHostSerialization", {
-      value: schema.fields.some((field) => Boolean((field.decorators?.omitIf && !field.decorators?.omitIfPlan) || field.decorators?.raw || field.decorators?.codec || field.hostManaged)),
+      value: schema.fields.some((field) => Boolean(field.kind === "host" || (field.decorators?.omitIf && !field.decorators?.omitIfPlan) || field.decorators?.raw || field.decorators?.codec || field.hostManaged)),
       writable: true,
     });
   }

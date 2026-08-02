@@ -148,7 +148,7 @@ export function syncViewEnumerable(view, field, present) {
 }
 
 export function schemaHasComposites(schema) {
-  return schema.hasComposites ?? (schema.hasComposites = schema.lazyOffset !== undefined || schema.fields.some((field) => field.kind === "object" || field.kind === "array" || field.kind === "union"));
+  return schema.hasComposites ?? (schema.hasComposites = schema.lazyOffset !== undefined || schema.fields.some((field) => field.kind === "object" || field.kind === "array" || field.kind === "union" || field.kind === "host"));
 }
 
 /** Shared construction and ownership policy for raw and generated view adapters. */

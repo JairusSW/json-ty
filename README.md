@@ -420,8 +420,9 @@ const enabled = JSON.parse<boolean>("true");
 const nothing = JSON.stringify<null>(null);
 ```
 
-Strings, numbers, booleans, `null`, arrays, tuples, and schema-backed objects
-are all valid top-level typed values.
+Strings, numbers, booleans, `null`, arrays, tuples, schema-backed objects,
+`Date`, `Map`, `Set`, typed arrays, `ArrayBuffer`, `JSON.Box`, and `JSON.Raw`
+are valid top-level typed values.
 
 ### Dynamic JSON
 
@@ -434,13 +435,17 @@ const object = JSON.parse<JSON.Obj>(
 
 console.log(object.get("name")?.value);      // Ada
 console.log(object.get("items")?.toJS());    // [1, true, { ok: true }]
+object.get("items")?.as<JSON.Arr>().push("added");
 console.log(JSON.stringify<JSON.Obj>(object));
 
 JSON.dispose(object);
 ```
 
 Dynamic values use 16-byte tagged slots in the same manually managed document
-format. They are not pulled into typed schemas unless explicitly requested.
+format. Read-only views stay memory-backed; the first mutation materializes the
+tree once. `new JSON.Obj()`, `new JSON.Arr()`, `JSON.Value.from(value)`, the
+json-as collection helpers, and `JSON.parse(source, reusableValue)` are also
+supported.
 
 `JSON.Raw` validates an already encoded JSON fragment and allows raw insertion
 on supported host/dynamic paths:
@@ -461,6 +466,7 @@ Known decorators are resolved by import identity, not textual spelling:
 - `@optional`
 - `@lazy` / `@eager`
 - `@raw`
+- `@serializer(shape)` / `@deserializer(shape)`
 
 ### Aliases and Omission
 
@@ -523,9 +529,10 @@ Decorators not imported from `json-ty` are preserved. A field affected by an
 unknown runtime decorator becomes host-managed so its descriptor behavior is
 not silently replaced by a linear-memory accessor.
 
-Unsupported custom codec decorators likewise fall through unchanged. Arbitrary
-user code is never moved into generated Wasm without an explicit supported
-contract.
+Custom `@serializer` and `@deserializer` methods form an explicit, shape-checked
+host boundary. The transformed module registers the application class with the
+generated runtime, so custom classes also work when nested in another schema.
+Other unknown codec decorators continue to fall through unchanged.
 
 ## Object Behavior and Lifetime
 
@@ -657,6 +664,8 @@ Implemented:
 - real arrays, memory-backed arrays, nested arrays, and tuples;
 - discriminated object unions, literal types, and enum representations;
 - typed and dynamic JSON, raw host insertion, lazy parsing, and supported decorators;
+- json-as-compatible Date, Map, Set, typed-array, ArrayBuffer, Box, arbitrary-value,
+  custom serializer/deserializer, dynamic mutation, and parse-reuse policies;
 - portable string/byte ingress across browser and worker APIs, Deno, Bun, and Node.
 
 Build compatibility:
@@ -671,8 +680,8 @@ Build compatibility:
 Deliberately outside the current basic contract:
 
 - revivers, replacers, and pretty-print spacing;
-- unconstrained `any`, functions, symbols, index signatures, and untagged unions;
-- dedicated Date, Map, Set, typed-binary, and arbitrary custom-Wasm codecs;
+- functions, symbols, index signatures, and untagged unions;
+- moving arbitrary user serializer code into Wasm (custom hooks execute on the host);
 - CommonJS packaging and precompiled application-independent Wasm artifacts.
 
 See [FEATURE_MATRIX.md](./FEATURE_MATRIX.md) for the exact support matrix.

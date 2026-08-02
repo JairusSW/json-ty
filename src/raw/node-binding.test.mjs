@@ -15,6 +15,17 @@ const runtime = new RawNodeBinding(wasmBytes, {
   heapReserve: 1 << 20,
 });
 
+const constructedDynamic = new JsonTy.Obj();
+const constructedItems = new JsonTy.Arr();
+constructedItems.push(3, 1, 2);
+constructedDynamic.set("items", constructedItems);
+constructedDynamic.get("items").as().sort((left, right) => left.value - right.value);
+assert.equal(constructedDynamic.toString(), '{"items":[1,2,3]}');
+const reusedFallback = new JsonTy.Obj();
+assert.equal(JsonTy.parse('{"x":1}', reusedFallback), reusedFallback);
+assert.equal(reusedFallback.getAs("x"), 1);
+assert.equal(JsonTy.internal.stringify(JsonTy.internal.parse("[1,true]")), "[1,true]");
+
 for (const value of ["", "plain ASCII JSON bytes", '{"name":"café €17 😀","ok":true}', 'line one\nline two\t\\quoted"']) {
   assert.equal(runtime.echo(value), value);
 }
@@ -362,10 +373,10 @@ const dynamicGraphBeforeAccess = runtime.u32[(dynamicDocument + 16) >>> 2];
 assert.equal(dynamic.type, "object");
 assert.equal(dynamic.get("name").value, "café");
 const dynamicItems = dynamic.get("items");
-assert.equal(
+assert.notEqual(
   runtime.u32[(dynamicDocument + 16) >>> 2],
   dynamicGraphBeforeAccess,
-  "dynamic parsing eagerly materializes the complete graph by default",
+  "retained dynamic parsing materializes nested containers on first access",
 );
 assert.equal(dynamicItems.at(1).value, true);
 assert.equal(dynamicItems.at(2).value, null);
@@ -438,6 +449,23 @@ for (const value of prototypeKeyValues) {
 const prettyDynamic = runtime.parseDynamic('{ "outer": [ { "n": -0 }, true ] }');
 assert.equal(prettyDynamic.stringify(), '{"outer":[{"n":0},true]}');
 prettyDynamic.dispose();
+const mutableDynamic = runtime.parseDynamic('{"items":[3,1,2],"keep":true}');
+const mutableItems = mutableDynamic.getAs("items");
+mutableItems.push(4);
+mutableItems.set(0, 0).sort((left, right) => left.value - right.value);
+assert.deepEqual(mutableItems.map((value) => value.value * 2).toArray(), [0, 2, 4, 8]);
+assert.equal(mutableDynamic.set("name", "ok").delete("keep"), true);
+assert.equal(mutableDynamic.stringify(), '{"items":[0,1,2,4],"name":"ok"}');
+assert.deepEqual(mutableDynamic.toObject(), { items: [0, 1, 2, 4], name: "ok" });
+mutableDynamic.dispose();
+const reusableObject = runtime.parseDynamic("{}", { eager: false });
+assert.equal(runtime.parseDynamic('{"a":1,"b":2}', reusableObject), reusableObject);
+assert.equal(reusableObject.getAs("a"), 1);
+assert.equal(runtime.parseDynamic('{"x":9}', reusableObject), reusableObject);
+assert.equal(reusableObject.size, 1);
+assert.equal(reusableObject.has("a"), false);
+assert.equal(reusableObject.stringify(), '{"x":9}');
+reusableObject.dispose();
 assert.equal(runtime.stringifyDynamic({ raw: new JsonTy.Raw('{"kept":[1,true]}'), boxed: new Number(4) }), '{"raw":{"kept":[1,true]},"boxed":4}');
 const [RawHolder] = createSchemaRegistry([
   {

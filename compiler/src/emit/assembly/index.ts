@@ -11,6 +11,7 @@ import type {
   AssemblyTypeEmitter,
 } from "./types.js";
 import { unionEmitter } from "./union.js";
+import { hostEmitter } from "./host.js";
 
 const emitters: Record<TypeRef["kind"], AssemblyTypeEmitter> = {
   number: numberEmitter as AssemblyTypeEmitter,
@@ -20,6 +21,7 @@ const emitters: Record<TypeRef["kind"], AssemblyTypeEmitter> = {
   object: objectEmitter as AssemblyTypeEmitter,
   array: arrayEmitter as AssemblyTypeEmitter,
   union: unionEmitter as AssemblyTypeEmitter,
+  host: hostEmitter as AssemblyTypeEmitter,
 };
 
 export function assemblyTypeEmitter(type: TypeRef): AssemblyTypeEmitter {

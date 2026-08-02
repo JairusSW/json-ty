@@ -1,0 +1,266 @@
+import { JSON, json, alias, omit, omitnull, optional, lazy, eager, raw, omitif, codec, serializer, deserializer } from "json-ty";
+import { describe, expect } from "./harness.js";
+
+
+@json
+class MapValue {
+  id: i32 = 0;
+  name: string = "";
+}
+
+describe("Should deserialize complex objects", () => {
+  const input =
+    '{"a":{"b":{"c":[{"d":"random value 1"},{"e":["value 2","value 3"]}],"f":{"g":{"h":[1,2,3],"i":{"j":"nested value"}}}},"k":"simple value"},"l":[{"m":"another value","n":{"o":"deep nested","p":[{"q":"even deeper"},"final value"]}}],"r":null}';
+  expect(JSON.stringify(JSON.parse<Map<string, JSON.Raw>>(input))).toBe(input);
+});
+
+describe("Additional regression coverage - primitives and arrays", () => {
+  expect(JSON.stringify(JSON.parse<string>('"regression"'))).toBe(
+    '"regression"',
+  );
+  expect(JSON.stringify(JSON.parse<i32>("-42"))).toBe("-42");
+  expect(JSON.stringify(JSON.parse<bool>("false"))).toBe("false");
+  expect(JSON.stringify(JSON.parse<f64>("3.5"))).toBe("3.5");
+  expect(JSON.stringify(JSON.parse<i32[]>("[1,2,3,4]"))).toBe("[1,2,3,4]");
+  expect(JSON.stringify(JSON.parse<string[]>('["a","b","c"]'))).toBe(
+    '["a","b","c"]',
+  );
+});
+
+describe("Should serialize and deserialize primitive maps", () => {
+  const m = new Map<string, i32>();
+  m.set("one", 1);
+  m.set("two", 2);
+  expect(JSON.stringify(m)).toBe('{"one":1,"two":2}');
+  expect(
+    JSON.stringify(JSON.parse<Map<string, i32>>('{"one":1,"two":2}')),
+  ).toBe('{"one":1,"two":2}');
+});
+
+describe("Should serialize and deserialize nested map values", () => {
+  const m = new Map<string, string[]>();
+  m.set("letters", ["a", "b", "c"]);
+  expect(JSON.stringify(m)).toBe('{"letters":["a","b","c"]}');
+  expect(
+    JSON.stringify(
+      JSON.parse<Map<string, string[]>>('{"letters":["a","b","c"]}'),
+    ),
+  ).toBe('{"letters":["a","b","c"]}');
+});
+
+describe("Should handle maps with booleans, floats, and whitespace", () => {
+  expect(
+    JSON.stringify(
+      JSON.parse<Map<string, bool>>('{ "yes" : true , "no" : false }'),
+    ),
+  ).toBe('{"yes":true,"no":false}');
+  expect(
+    JSON.stringify(
+      JSON.parse<Map<string, f64>>('{ "pi" : 3.14 , "e" : 2.718 }'),
+    ),
+  ).toBe('{"pi":3.14,"e":2.718}');
+});
+
+describe("Should serialize and deserialize maps with boolean keys", () => {
+  const parsed = JSON.parse<Map<bool, i32>>('{"true":1,"false":2}');
+  expect(parsed.get(true)).toBe(1);
+  expect(parsed.get(false)).toBe(2);
+  expect(JSON.stringify(parsed)).toBe('{"true":1,"false":2}');
+});
+
+describe("Should serialize and deserialize maps with integer keys", () => {
+  const m = new Map<i32, string>();
+  m.set(1, "one");
+  m.set(-2, "two");
+  expect(JSON.stringify(m)).toBe('{"1":"one","-2":"two"}');
+
+  const parsed = JSON.parse<Map<i32, string>>('{"1":"one","-2":"two"}');
+  expect(parsed.get(1)).toBe("one");
+  expect(parsed.get(-2)).toBe("two");
+  expect(JSON.stringify(parsed)).toBe('{"1":"one","-2":"two"}');
+});
+
+describe("Should serialize and deserialize maps with float keys", () => {
+  const m = new Map<f64, i32>();
+  m.set(3.5, 1);
+  m.set(-0.125, 2);
+  expect(JSON.stringify(m)).toBe('{"3.5":1,"-0.125":2}');
+
+  const parsed = JSON.parse<Map<f64, i32>>('{"3.5":1,"-0.125":2}');
+  const keys = Array.from(parsed.keys());
+  expect(keys.length).toBe(2);
+  expect(keys[0].toString()).toBe("3.5");
+  expect(keys[1].toString()).toBe("-0.125");
+  expect(Array.from(parsed.values())[0]).toBe(1);
+  expect(Array.from(parsed.values())[1]).toBe(2);
+  expect(JSON.stringify(parsed)).toBe('{"3.5":1,"-0.125":2}');
+});
+
+describe("Should serialize and deserialize maps with date keys", () => {
+  const m = new Map<Date, i32>();
+  m.set(new Date(0), 1);
+  m.set(new Date(1738618120525), 2);
+  expect(JSON.stringify(m)).toBe(
+    '{"\\"1970-01-01T00:00:00.000Z\\"":1,"\\"2025-02-03T21:28:40.525Z\\"":2}',
+  );
+
+  const parsed = JSON.parse<Map<Date, i32>>(
+    '{"\\"1970-01-01T00:00:00.000Z\\"":1,"\\"2025-02-03T21:28:40.525Z\\"":2}',
+  );
+  const keys = Array.from(parsed.keys());
+  expect(keys.length).toBe(2);
+  expect(keys[0].getTime().toString()).toBe("0");
+  expect(keys[1].getTime().toString()).toBe("1738618120525");
+  expect(Array.from(parsed.values())[0]).toBe(1);
+  expect(Array.from(parsed.values())[1]).toBe(2);
+  expect(JSON.stringify(parsed)).toBe(
+    '{"\\"1970-01-01T00:00:00.000Z\\"":1,"\\"2025-02-03T21:28:40.525Z\\"":2}',
+  );
+});
+
+describe("Should serialize and deserialize maps with struct keys", () => {
+  const m = new Map<MapValue, i32>();
+  m.set({ id: 1, name: "alice" }, 10);
+  m.set({ id: 2, name: "bob" }, 20);
+  expect(JSON.stringify(m)).toBe(
+    '{"{\\"id\\":1,\\"name\\":\\"alice\\"}":10,"{\\"id\\":2,\\"name\\":\\"bob\\"}":20}',
+  );
+
+  const parsed = JSON.parse<Map<MapValue, i32>>(
+    '{"{\\"id\\":1,\\"name\\":\\"alice\\"}":10,"{\\"id\\":2,\\"name\\":\\"bob\\"}":20}',
+  );
+  const keys = Array.from(parsed.keys());
+  expect(keys.length).toBe(2);
+  expect(keys[0].id).toBe(1);
+  expect(keys[0].name).toBe("alice");
+  expect(keys[1].id).toBe(2);
+  expect(keys[1].name).toBe("bob");
+  expect(Array.from(parsed.values())[0]).toBe(10);
+  expect(Array.from(parsed.values())[1]).toBe(20);
+  expect(JSON.stringify(parsed)).toBe(
+    '{"{\\"id\\":1,\\"name\\":\\"alice\\"}":10,"{\\"id\\":2,\\"name\\":\\"bob\\"}":20}',
+  );
+});
+
+describe("Should serialize and deserialize maps with array keys", () => {
+  const m = new Map<i32[], string>();
+  m.set([1, 2], "a");
+  m.set([3], "b");
+  expect(JSON.stringify(m)).toBe('{"[1,2]":"a","[3]":"b"}');
+
+  const parsed = JSON.parse<Map<i32[], string>>('{"[1,2]":"a","[3]":"b"}');
+  const keys = Array.from(parsed.keys());
+  expect(keys.length).toBe(2);
+  expect(JSON.stringify(keys[0])).toBe("[1,2]");
+  expect(JSON.stringify(keys[1])).toBe("[3]");
+  expect(Array.from(parsed.values())[0]).toBe("a");
+  expect(Array.from(parsed.values())[1]).toBe("b");
+  expect(JSON.stringify(parsed)).toBe('{"[1,2]":"a","[3]":"b"}');
+});
+
+describe("Should round-trip maps with nested object values", () => {
+  const parsed = JSON.parse<Map<string, MapValue>>(
+    '{"a":{"id":1,"name":"alice"},"b":{"id":2,"name":"bob"}}',
+  );
+  expect(parsed.get("a")!.id.toString()).toBe("1");
+  expect(parsed.get("a")!.name).toBe("alice");
+  expect(parsed.get("b")!.id.toString()).toBe("2");
+  expect(parsed.get("b")!.name).toBe("bob");
+  expect(JSON.stringify(parsed)).toBe(
+    '{"a":{"id":1,"name":"alice"},"b":{"id":2,"name":"bob"}}',
+  );
+});
+
+describe("Should reuse mapped structs and remove stale keys", () => {
+  const target = JSON.parse<Map<string, MapValue>>(
+    '{"a":{"id":1,"name":"old-a"},"b":{"id":2,"name":"old-b"}}',
+  );
+  const reusedA = target.get("a");
+
+  const result = JSON.parse<Map<string, MapValue>>(
+    '{"a":{"id":10,"name":"new-a"},"c":{"id":3,"name":"new-c"}}',
+    target,
+  );
+  expect((result === target).toString()).toBe("true");
+  expect((result.get("a") === reusedA).toString()).toBe("true");
+  expect(result.get("a")!.id).toBe(10);
+  expect(result.get("a")!.name).toBe("new-a");
+  expect(result.has("b").toString()).toBe("false");
+  expect(result.get("c")!.id).toBe(3);
+  expect(result.size).toBe(2);
+
+  JSON.parse<Map<string, MapValue>>(
+    '{"a":{"id":20,"name":"first"},"a":{"id":21,"name":"last"}}',
+    result,
+  );
+  expect(result.size).toBe(1);
+  expect(result.has("c").toString()).toBe("false");
+  expect(result.get("a")!.id).toBe(21);
+  expect(result.get("a")!.name).toBe("last");
+
+  JSON.parse<Map<string, MapValue>>("{}", result);
+  expect(result.size).toBe(0);
+});
+
+describe("Should deserialize top-level map arrays", () => {
+  const input = '[{"a":1},{"b":2,"c":3},{}]';
+  const parsed = JSON.parse<Map<string, i32>[]>(input);
+  expect(parsed.length).toBe(3);
+  expect(parsed[0].get("a")).toBe(1);
+  expect(parsed[1].get("b")).toBe(2);
+  expect(parsed[1].get("c")).toBe(3);
+  expect(parsed[2].size).toBe(0);
+  expect(JSON.stringify(parsed)).toBe(input);
+
+  const spaced = JSON.parse<Map<string, i32>[]>(
+    ' [ { "a" : 1 } , { "b" : 2 , "c" : 3 } , { } ] ',
+  );
+  expect(spaced.length).toBe(3);
+  expect(spaced[1].get("c")).toBe(3);
+
+  const empty = JSON.parse<Map<string, i32>[]>("[]");
+  expect(empty.length).toBe(0);
+  expect(JSON.stringify(empty)).toBe("[]");
+});
+
+describe("Extended regression coverage - nested and escaped payloads", () => {
+  expect(JSON.stringify(JSON.parse<i32>("0"))).toBe("0");
+  expect(JSON.stringify(JSON.parse<bool>("true"))).toBe("true");
+  expect(JSON.stringify(JSON.parse<f64>("-0.125"))).toBe("-0.125");
+  expect(JSON.stringify(JSON.parse<i32[][]>("[[1],[2,3],[]]"))).toBe(
+    "[[1],[2,3],[]]",
+  );
+  expect(JSON.stringify(JSON.parse<string>('"line\\nbreak"'))).toBe(
+    '"line\\nbreak"',
+  );
+});
+
+describe("Should parse maps with internal whitespace and mixed nested values", () => {
+  const direct = JSON.parse<Map<string, i32>>('{ "a" : 1 , "b" : 2 }');
+  expect(direct.get("a")).toBe(1);
+  expect(direct.get("b")).toBe(2);
+  expect(JSON.stringify(direct)).toBe('{"a":1,"b":2}');
+
+  const raws = JSON.parse<Map<string, JSON.Raw>>(
+    '{"obj":{"x":1},"arr":[1,2],"str":"abc"}',
+  );
+  expect(raws.size).toBe(3);
+  expect(raws.get("obj")!.toString()).toBe('{"x":1}');
+  expect(raws.get("arr")!.toString()).toBe("[1,2]");
+  expect(raws.get("str")!.toString()).toBe('"abc"');
+});
+
+describe("Should parse Map<string, JSON.Value> across all branches", () => {
+  const direct = JSON.parse<Map<string, JSON.Value>>(
+    ' { "t" : true , "f" : false , "n" : null , "o" : {"x":1} , "a" : [1,2] , "s" : "hi" } ',
+  );
+  expect(direct.get("t")!.toString()).toBe("true");
+  expect(direct.get("f")!.toString()).toBe("false");
+  expect(direct.get("n")!.toString()).toBe("null");
+  expect(direct.get("o")!.get<JSON.Obj>().get("x")!.toString()).toBe("1");
+  expect(direct.get("a")!.get<JSON.Arr>().at(1)!.toString()).toBe("2");
+  expect(direct.get("s")!.get<string>()).toBe("hi");
+
+  const empty = JSON.parse<Map<string, JSON.Value>>("{}");
+  expect(empty.size).toBe(0);
+});

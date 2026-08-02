@@ -5,11 +5,11 @@ const program = createProgramFromConfig("compiler/fixtures/tsconfig.json");
 const first = analyzeProgram(program).manifest;
 const second = analyzeProgram(program).manifest;
 
-assert.equal(first.version, 6);
+assert.equal(first.version, 10);
 assert.equal(first.hash, second.hash);
 assert.deepEqual(
   first.schemas.map((schema) => schema.name),
-  ["AuditedEntity", "booleanValue", "Box__number", "Cat", "CompositeDefaults", "Config", "Dog", "LazyAll", "LazyAuto", "LazyConvenience", "LazyConvenienceAll", "LazyConvenienceNone", "LazyNone", "Leaf", "Middle", "nullValue", "numberArray", "numberJsonArray", "numberValue", "Page__AuditedEntity", "Player", "PlayerArray", "Position", "stringValue"],
+  ["AuditedEntity", "booleanValue", "Box__number", "Cat", "CompositeDefaults", "Config", "CustomHolder", "CustomPoint", "DateValue", "Dog", "HostCollections", "LazyAll", "LazyAuto", "LazyConvenience", "LazyConvenienceAll", "LazyConvenienceNone", "LazyNone", "Leaf", "Middle", "nullValue", "numberArray", "numberJsonArray", "numberValue", "Page__AuditedEntity", "Player", "PlayerArray", "Position", "stringValue"],
 );
 const playerArray = first.schemas.find((schema) => schema.name === "PlayerArray");
 assert.equal(playerArray.root, "array");
@@ -22,6 +22,32 @@ for (const [name, kind] of [["stringValue", "string"], ["numberValue", "number"]
   assert.equal(root.root, "value");
   assert.equal(root.fields[0].type.kind, kind);
 }
+assert.deepEqual(first.schemas.find((schema) => schema.name === "DateValue").fields[0].type, {
+  kind: "host",
+  codec: { kind: "date" },
+});
+const hostCollections = first.schemas.find((schema) => schema.name === "HostCollections");
+assert.deepEqual(hostCollections.fields.map((field) => [field.name, field.type.codec?.kind]), [
+  ["at", "date"],
+  ["counts", "map"],
+  ["positions", "map"],
+  ["tags", "set"],
+  ["bytes", "typed-array"],
+  ["buffer", "array-buffer"],
+  ["score", "box"],
+  ["payload", "raw"],
+  ["dynamic", "dynamic"],
+]);
+const customPoint = first.schemas.find((schema) => schema.name === "CustomPoint");
+assert.equal(customPoint.root, "value");
+assert.deepEqual(customPoint.fields[0].type.codec, {
+  kind: "custom",
+  typeName: "CustomPoint",
+  serializer: "encode",
+  deserializer: "decode",
+  shape: "string",
+});
+assert.equal(first.schemas.find((schema) => schema.name === "CustomHolder").fields[0].type.codec.kind, "custom");
 
 const player = first.schemas.find((schema) => schema.name === "Player");
 assert.ok(player);

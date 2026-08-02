@@ -8,8 +8,8 @@ import type { TypeRef } from "../../schema-ir.js";
 export function typeSignature(type: TypeRef): string {
   if (type.kind === "array") {
     return type.elements
-      ? `tuple<${type.elements.map(typeSignature).join(",")}>`
-      : `array<${typeSignature(type.element)}>`;
+      ? `tuple<${type.elements.map((element, index) => `${type.elementsNullable?.[index] ? "?" : ""}${typeSignature(element)}`).join(",")}>`
+      : `array<${type.elementNullable ? "?" : ""}${typeSignature(type.element)}>`;
   }
   if (type.kind === "object") return `object<${type.typeName}>`;
   if (type.kind === "union") {
@@ -17,6 +17,7 @@ export function typeSignature(type: TypeRef): string {
       .map((variant) => `${variant.typeName}=${String(variant.discriminatorValue)}`)
       .join(",")}>`;
   }
+  if (type.kind === "host") return `host<${JSON.stringify(type.codec)}>`;
   return type.kind;
 }
 
@@ -26,6 +27,7 @@ export function elementStride(type: TypeRef): number {
   if (
     type.kind === "number" ||
     type.kind === "string" ||
+    type.kind === "host" ||
     type.kind === "union" ||
     type.kind === "array"
   ) {
@@ -35,5 +37,5 @@ export function elementStride(type: TypeRef): number {
 }
 
 export function isCompositeType(type: TypeRef): boolean {
-  return type.kind === "object" || type.kind === "array" || type.kind === "union";
+  return type.kind === "object" || type.kind === "array" || type.kind === "union" || type.kind === "host";
 }

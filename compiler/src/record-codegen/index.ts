@@ -346,7 +346,7 @@ ${fields}
 
 function generateParser(layout: ObjectLayout): string {
   const defaults = defaultInitialization(layout);
-  const retainsSource = layout.fields.some((field) => field.kind === "string" || isDeferred(field));
+  const retainsSource = layout.fields.some((field) => field.kind === "string" || field.kind === "host" || isDeferred(field));
   const hasOrderedTier = layout.fields.length !== 0;
   const dispatch = layout.fields
     .map((field, index) => {
@@ -420,7 +420,7 @@ ${orderedWhitespaceParse(layout)}
     cursor = skipWhitespace(cursor + 1, documentEnd);
 
 ${dispatch}
-    else {
+    ${dispatch ? "else " : ""}{
       const next = skipValue(cursor, documentEnd);
       if (next == 0) return fail${layout.name}(<u32>document, ERROR_UNEXPECTED_TOKEN, <u32>(cursor - documentSource));
       cursor = next;

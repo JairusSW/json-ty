@@ -17,7 +17,10 @@ const bytes = new Uint8Array(memory.buffer);
 const encoder = new TextEncoder();
 const start = 4096;
 const series = [
+  "12345678",
+  "12345678.25",
   "12.3456",
+  "1.12345678",
   "123.123456789012",
   "1.1234567890123456",
 ];
@@ -42,17 +45,20 @@ for (const source of series) {
   bytes.set(payload, start);
   const end = start + payload.length;
   const iterations = 10_000_000;
-  const swar = median("benchSwar", end, iterations);
+  const swar = median("benchPacked4", end, iterations);
   const scalar = median("benchScalar", end, iterations);
-  if (swar.checksum !== scalar.checksum) throw new Error(`${source} checksum mismatch`);
+  const simdjson8 = median("benchSwar", end, iterations);
+  if (swar.checksum !== scalar.checksum || swar.checksum !== simdjson8.checksum) throw new Error(`${source} checksum mismatch`);
   const swarNs = swar.milliseconds * 1e6 / iterations;
   const scalarNs = scalar.milliseconds * 1e6 / iterations;
+  const simdjson8Ns = simdjson8.milliseconds * 1e6 / iterations;
   results.push({
     source,
     swarNsPerValue: Number(swarNs.toFixed(3)),
     scalarNsPerValue: Number(scalarNs.toFixed(3)),
     speedup: Number((scalarNs / swarNs).toFixed(3)),
+    simdjson8NsPerValue: Number(simdjson8Ns.toFixed(3)),
+    simdjson8VsCurrent: Number((swarNs / simdjson8Ns).toFixed(3)),
   });
 }
 console.log(JSON.stringify({ wasmBytes: wasmBytes.byteLength, results }));
-

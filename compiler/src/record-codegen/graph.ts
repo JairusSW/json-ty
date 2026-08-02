@@ -349,7 +349,7 @@ ${bitmapDeclarations(layout, "lazy", layout.lazyOffset)}
     if (cursor >= end || load<u8>(cursor) != 0x3a) return graphFailure(cursor);
     cursor = skipWhitespace(cursor + 1, end);
 ${dispatch}
-    else {
+    ${dispatch ? "else " : ""}{
       const unknownEnd = skipValue(cursor, end);
       if (unknownEnd == 0) return graphFailure(cursor);
       cursor = unknownEnd;
@@ -527,12 +527,21 @@ ${fields}
 function generateArrayParser(type: TypeRef & { kind: "array" }, name: string, layouts: ReadonlyMap<string, ObjectLayout>, arrays: ArrayRegistry): string {
   const stride = type.elements ? 16 : elementStride(type.element);
   const element = parseValue(type.element, "elementSlot", layouts, arrays).replace(/\bcursor\b/g, "elementCursor");
+  const parsedElement = type.elementNullable
+    ? `const nullEnd = deserializeNull(elementCursor, end);
+      if (nullEnd != 0) {
+        memory.fill(elementSlot, 0, ${stride});
+        elementCursor = nullEnd;
+      } else {
+        ${element.replaceAll("\n", "\n        ")}
+      }`
+    : element;
   if (!type.elements) {
     // Materialize actual elements into small stack-disciplined high-scratch
     // chunks. Nested arrays use and release space below the parent's live
     // chunks. Chunks arrive in reverse address order but their slots remain in
     // source order, so final flattening uses one bulk copy per 16 elements.
-    const elementKind = type.element.kind === "null" ? 0 : type.element.kind === "number" ? 1 : type.element.kind === "boolean" ? 2 : type.element.kind === "string" ? 3 : type.element.kind === "object" ? 4 : type.element.kind === "union" ? 7 : 5;
+    const elementKind = type.element.kind === "null" ? 0 : type.element.kind === "number" ? 1 : type.element.kind === "boolean" ? 2 : type.element.kind === "string" ? 3 : type.element.kind === "object" ? 4 : type.element.kind === "host" ? 6 : type.element.kind === "union" ? 7 : 5;
     const chunkBytes = stride * 16;
     return `
 function parse${name}(cursor: usize, end: usize, destination: usize): usize {
@@ -555,7 +564,7 @@ function parse${name}(cursor: usize, end: usize, destination: usize): usize {
         scratchChunkUsed = 0;
       }
       const elementSlot = scratchChunk + <usize>scratchChunkUsed * ${stride};
-      ${element.replaceAll("\n", "\n      ")}
+      ${parsedElement.replaceAll("\n", "\n      ")}
       scratchChunkUsed++;
       count++;
       elementCursor = skipWhitespace(elementCursor, end);
@@ -785,7 +794,13 @@ ${fields}
 
 function generateArraySerializer(type: TypeRef & { kind: "array" }, name: string, arrays: ArrayRegistry): string {
   const stride = type.elements ? 16 : elementStride(type.element);
-  const value = serializeValue(type.element, `data + <usize>index * ${stride}`, arrays);
+  const source = `data + <usize>index * ${stride}`;
+  const encodedValue = serializeValue(type.element, source, arrays);
+  const empty = stride === 4 ? `load<u32>(${source}) == 0` : `load<u64>(${source}) == 0`;
+  const value = type.elementNullable
+    ? `if (${empty}) { if (!serializeNull()) return false; }
+    else { ${encodedValue} }`
+    : encodedValue;
   const tupleValues = type.elements
     ?.map((tupleType, index) => {
       const encoded = serializeValue(tupleType, `data + ${index * 16}`, arrays).replaceAll("\n", "\n  ");
