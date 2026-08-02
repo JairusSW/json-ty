@@ -16,19 +16,16 @@ function emitViewClasses(layouts: ObjectLayout[]): string {
           caches.set(field.index, `${schemaVariable}Cache${field.index}`);
         }
       }
-      const cacheDeclarations = [...caches.values()]
-        .map((name) => `const ${name} = Symbol();`)
-        .join("\n");
+      const cacheDeclarations = [...caches.values()].map((name) => `const ${name} = Symbol();`).join("\n");
       const getters = layout.fields
-        .map((field) => emitHostAccessor(
-          field.type ?? ({ kind: field.kind } as TypeRef),
-          {
+        .map((field) =>
+          emitHostAccessor(field.type ?? ({ kind: field.kind } as TypeRef), {
             layout,
             field,
             schemaVariable,
             cacheVariable: caches.get(field.index),
-          },
-        ))
+          }),
+        )
         .join("\n");
       return `${cacheDeclarations}
 class ${layout.name}HostView extends GeneratedViewBase {
@@ -83,17 +80,13 @@ __jsonTyRuntime.${`stringify${layout.name}`} = ${layout.abi!.serialize};`;
 
 /** Generate the complete JavaScript artifact consumed by transformed applications. */
 export function generateHostArtifact(layouts: ObjectLayout[]): HostArtifact {
-  const schemaDeclarations = layouts
-    .map((layout, index) => `const schema${index} = schemas.get(${JSON.stringify(layout.name)});`)
-    .join("\n");
-  const source = `import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
-import {
+  const schemaDeclarations = layouts.map((layout, index) => `const schema${index} = schemas.get(${JSON.stringify(layout.name)});`).join("\n");
+  const source = `import {
   RAW_ASCII_SOURCE,
   RAW_ROOT,
   RAW_RUNTIME,
   GeneratedViewBase,
-  RawNodeBinding,
+  instantiateRawBinding,
   activeDocument,
   bindSchemaClass,
   createSchemaRegistry,
@@ -107,7 +100,7 @@ import {
   writeGeneratedField,
 } from "json-ty/raw";
 
-const binding = new RawNodeBinding(readFileSync(fileURLToPath(new URL("./runtime.wasm", import.meta.url))));
+const binding = await instantiateRawBinding(new URL("./runtime.wasm", import.meta.url));
 export const schemas = createSchemaRegistry(${JSON.stringify(layouts)}, { views: false });
 ${schemaDeclarations}
 ${emitViewClasses(layouts)}
@@ -126,11 +119,6 @@ ${emitSchemaBindings(layouts)}
 
   return {
     source,
-    schemaBindings: Object.fromEntries(
-      layouts.map((layout) => [
-        layout.name,
-        { parse: layout.abi!.parse, stringify: layout.abi!.serialize },
-      ]),
-    ),
+    schemaBindings: Object.fromEntries(layouts.map((layout) => [layout.name, { parse: layout.abi!.parse, stringify: layout.abi!.serialize }])),
   };
 }

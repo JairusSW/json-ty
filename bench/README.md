@@ -55,7 +55,7 @@ Outputs:
 
 `npm run bench:all` regenerates every report required for publication, runs
 every ported kernel microbenchmark, renders all benchmark-backed charts, and
-syncs the publishable SVGs to `benchmark/charts/`.
+syncs the publishable SVGs to `bench/charts/`.
 
 Every run records `build/logs/benchmark-run.json`. A full manifest includes the
 SHA-256 digest of each publication report. Full chart generation and publishing
@@ -93,8 +93,8 @@ pass. Validation is mandatory and eager graph construction is the default.
 The lazy series explicitly selects retained nested spans, while Canada and Poet
 also have exact full typed schemas. Set
 `JSON_TY_CLASSIC_INPUT=string` to include host UTF-16→UTF-8 ingress, or
-`JSON_TY_CLASSIC_EAGER_BACKEND=host` to measure ordinary JavaScript-value
-output through the host backend. A complete run owns
+`JSON_TY_CLASSIC_EAGER_BACKEND=plain` to include direct lowering from the
+schemaless Wasm graph into ordinary JavaScript values. A complete run owns
 `build/logs/classic.json` and records every typed coverage gap and its reason;
 partial projection schemas are deliberately not reported as typed results.
 Filtered runs default to
@@ -110,7 +110,7 @@ Useful controls:
 - `JSON_TY_CLASSIC_VARIANTS=native,eager,lazy,obj`
 - `JSON_TY_CLASSIC_FORMATS=pretty,min`
 - `JSON_TY_CLASSIC_INPUT=buffer` (default) or `string`
-- `JSON_TY_CLASSIC_EAGER_BACKEND=graph` (default) or `host`
+- `JSON_TY_CLASSIC_EAGER_BACKEND=graph` (default) or `plain`
 - `JSON_TY_CLASSIC_MAX_BYTES=4000000`
 - `JSON_TY_BENCH_MS=250`
 
@@ -191,9 +191,16 @@ Additional full-report charts:
 - `rfc-coverage.{svg,png}`: all 318 JSONTestSuite fixtures by tier and expected
   outcome
 
+`bench:parity` selects the json-as artifact with the same kernel tier as the
+json-ty artifact (`naive`, `swar`, or `simd`). It writes both the moving
+`build/logs/json-as-parity.json` report and a tier-specific
+`json-as-parity-<tier>.json` report. Parse rows also record eager Document
+bytes used/reserved, json-ty's one-parse peak linear memory, and the complete
+equivalent json-as benchmark artifact's peak linear memory.
+
 Charts use a shared palette and layout conventions with json-ty series and
 terminology. PNG output has an explicit white background and 3× density; SVGs
-are copied to `benchmark/charts/` for the README and package.
+are copied to `bench/charts/` for the README and package.
 
 Classic charts use the shared palette, typography, vertical value labels, and
 metadata subtitle. Their axis stays linear unless the shared sparse-outlier

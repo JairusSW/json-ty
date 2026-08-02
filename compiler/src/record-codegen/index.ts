@@ -619,6 +619,7 @@ export function generateAssemblyModule(schemas: ObjectSchema[], options: Assembl
   resetResult,
   setResultRoot,
   setResultOutput,
+  trimDocument,
 } from "${runtimeImportBase}/runtime";
 import {
   ERROR_INVALID_NUMBER,

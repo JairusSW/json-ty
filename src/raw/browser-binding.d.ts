@@ -1,5 +1,5 @@
 export * from "./index.js";
-import { RawNodeBinding, RawNodeBindingOptions } from "./index.js";
+import { RawBinding, RawBindingOptions, RawWasmSource } from "./index.js";
 
-export class RawBrowserBinding extends RawNodeBinding {}
-export function instantiateRawBrowserBinding(source: Uint8Array | ArrayBuffer | WebAssembly.Module | Response | URL | string, options?: RawNodeBindingOptions): Promise<RawBrowserBinding>;
+export class RawBrowserBinding extends RawBinding {}
+export function instantiateRawBrowserBinding(source: RawWasmSource | PromiseLike<RawWasmSource>, options?: RawBindingOptions): Promise<RawBrowserBinding>;

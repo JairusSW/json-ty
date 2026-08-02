@@ -65,6 +65,54 @@ export function scanString_NAIVE(
   if (start >= end || load<u8>(start) != QUOTE) return 0;
   let pointer = start + 1;
   let escaped = false;
+
+  // Host-validated UTF-8 needs only quote, escape, and control detection.
+  // Keep the naive tier scalar, but amortize the loop branch across eight
+  // ordered byte probes. Stopping before the first special byte preserves the
+  // exact scalar escape behavior below.
+  if (trusted) {
+    while (pointer + 8 <= end) {
+      let value = load<u8>(pointer);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) break;
+      value = load<u8>(pointer + 1);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) {
+        pointer += 1;
+        break;
+      }
+      value = load<u8>(pointer + 2);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) {
+        pointer += 2;
+        break;
+      }
+      value = load<u8>(pointer + 3);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) {
+        pointer += 3;
+        break;
+      }
+      value = load<u8>(pointer + 4);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) {
+        pointer += 4;
+        break;
+      }
+      value = load<u8>(pointer + 5);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) {
+        pointer += 5;
+        break;
+      }
+      value = load<u8>(pointer + 6);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) {
+        pointer += 6;
+        break;
+      }
+      value = load<u8>(pointer + 7);
+      if (value == QUOTE || value == BACKSLASH || value < 0x20) {
+        pointer += 7;
+        break;
+      }
+      pointer += 8;
+    }
+  }
+
   while (pointer < end) {
     const value = load<u8>(pointer);
     if (value == QUOTE) return result(pointer + 1, escaped);

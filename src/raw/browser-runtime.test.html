@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>json-ty browser runtime test</title>
+  </head>
+  <body>
+    <pre id="result">running</pre>
+    <script type="module">
+      globalThis.__jsonTyBrowserTest = { status: "running" };
+      const result = document.querySelector("#result");
+      try {
+        const { runBrowserRuntimeTest } = await import("./browser-runtime.test.mjs");
+        const details = await runBrowserRuntimeTest();
+        globalThis.__jsonTyBrowserTest = { status: "passed", details };
+        result.textContent = JSON.stringify(globalThis.__jsonTyBrowserTest);
+      } catch (error) {
+        globalThis.__jsonTyBrowserTest = {
+          status: "failed",
+          message: error instanceof Error ? (error.stack ?? error.message) : String(error),
+        };
+        result.textContent = JSON.stringify(globalThis.__jsonTyBrowserTest);
+      }
+    </script>
+  </body>
+</html>

@@ -55,9 +55,60 @@ assert.match(
 
 const layouts = JSON.parse(readFileSync(first.layoutsPath, "utf8"));
 const generatedHost = readFileSync(first.runtimePath, "utf8");
+assert.doesNotMatch(generatedHost, /node:(?:fs|url)/, "generated runtimes must not import Node built-ins");
+assert.match(
+  generatedHost,
+  /instantiateRawBinding\(new URL\("\.\/runtime\.wasm"/,
+  "generated runtimes must use the portable Wasm loader",
+);
 const executableRuntimePath = join(generatedDirectory, "runtime-executable.mjs");
 writeFileSync(executableRuntimePath, generatedHost.replace('from "json-ty/raw"', `from ${JSON.stringify(pathToFileURL(resolve("src/raw/index.js")).href)}`));
 const generatedRuntime = await import(`${pathToFileURL(executableRuntimePath).href}?${Date.now()}`);
+const generatedEntityLayout = layouts.find((layout) => layout.name === "AuditedEntity");
+const generatedEntity = generatedRuntime[generatedEntityLayout.abi.parse](
+  '{"id":1,"name":"Ada","createdAt":"now","note":"required override","updatedAt":"later"}',
+);
+assert.equal(generatedEntity.id, 1);
+assert.equal(generatedEntity.name, "Ada");
+assert.equal(generatedEntity.note, "required override");
+generatedEntity.note = "inherited interface field";
+assert.equal(
+  generatedRuntime[generatedEntityLayout.abi.serialize](generatedEntity),
+  '{"id":1,"name":"Ada","createdAt":"now","note":"inherited interface field","updatedAt":"later"}',
+);
+generatedEntity.dispose();
+const generatedPageLayout = layouts.find((layout) => layout.name === "Page__AuditedEntity");
+const generatedPage = generatedRuntime[generatedPageLayout.abi.parse](
+  '{"items":[{"id":2,"name":"Grace","createdAt":"then","note":"page","updatedAt":"now"}],"total":1}',
+);
+assert.equal(generatedPage.items[0].name, "Grace");
+assert.equal(generatedPage.total, 1);
+generatedPage.dispose();
+class RuntimeBase {
+  inheritedMethod() {
+    return `${this.inherited}:${this.value}`;
+  }
+}
+class RuntimeMiddle extends RuntimeBase {}
+class RuntimeLeaf extends RuntimeMiddle {
+  leafMethod() {
+    return this.leaf;
+  }
+}
+const generatedLeafLayout = layouts.find((layout) => layout.name === "Leaf");
+const generatedLeaf = generatedRuntime[generatedLeafLayout.abi.parse](
+  '{"inherited":"middle","constructorField":5,"base_value":2,"middle":true,"leaf":"yes"}',
+  RuntimeLeaf,
+);
+assert.ok(generatedLeaf instanceof RuntimeLeaf);
+assert.ok(generatedLeaf instanceof RuntimeBase);
+assert.equal(generatedLeaf.inheritedMethod(), "middle:2");
+assert.equal(generatedLeaf.leafMethod(), "yes");
+assert.equal(
+  generatedRuntime[generatedLeafLayout.abi.serialize](generatedLeaf),
+  '{"inherited":"middle","constructorField":5,"base_value":2,"middle":true,"leaf":"yes"}',
+);
+generatedLeaf.dispose();
 class LazyAutoClass {}
 const generatedLazyLayout = layouts.find((layout) => layout.name === "LazyAuto");
 assert.equal(typeof generatedRuntime[generatedLazyLayout.abi.parse], "function");
@@ -207,6 +258,12 @@ assert.deepEqual(numbers, [1, 2.5, -3]);
 numbers[1] = 4;
 assert.equal(runtime.stringify(NumberArray, numbers), "[1,4,-3]");
 numbers.dispose();
+const denseNumbersSource = `[${new Array(2048).fill("0").join(",")}]`;
+const denseNumbers = runtime.parse(NumberArray, denseNumbersSource);
+assert.equal(denseNumbers.length, 2048);
+assert.equal(denseNumbers[0], 0);
+assert.equal(denseNumbers[2047], 0);
+denseNumbers.dispose();
 
 const NumberFacade = schemas.get("numberJsonArray");
 const numberFacade = runtime.parse(NumberFacade, "[3,4,5]");

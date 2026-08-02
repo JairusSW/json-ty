@@ -8,6 +8,10 @@ const targetMs = Math.max(100, Number(process.env.JSON_TY_PARITY_MS ?? 500));
 const minimumRatio = Number(process.env.JSON_TY_PARITY_RATIO ?? 1.5);
 const jsonAsRoot = resolve(process.env.JSON_AS_ROOT ?? "../json-as");
 const tierMetadata = JSON.parse(readFileSync("build/parity/kernel-tier.json", "utf8"));
+const equivalentJsonAsTier = tierMetadata.kernelTier;
+if (!["naive", "swar", "simd"].includes(equivalentJsonAsTier)) {
+  throw new Error(`Unsupported json-as comparison tier ${equivalentJsonAsTier}`);
+}
 
 function runJsonAsArtifact(file) {
   const artifact = resolve(jsonAsRoot, "build", file);
@@ -56,7 +60,10 @@ function runJsonAsArtifact(file) {
       description = null;
     }
   }
-  return results;
+  return {
+    results,
+    peakLinearBytes: memory.buffer.byteLength,
+  };
 }
 
 function fastest(results, ...names) {
@@ -92,11 +99,24 @@ function measureBatch(bytes, batch, operation) {
   return result;
 }
 
-const vec3As = runJsonAsArtifact("vec3.bench.incremental.simd.wasm");
-const deserializeAs = runJsonAsArtifact("deserialize.bench.incremental.simd.wasm");
-const serializeAs = runJsonAsArtifact("serialize.bench.incremental.simd.wasm");
-const canadaAs = runJsonAsArtifact("canada.bench.incremental.simd.wasm");
-const poetAs = runJsonAsArtifact("poet.bench.incremental.simd.wasm");
+function formatMemory(bytes) {
+  return bytes < 1 << 20
+    ? `${(bytes / 1024).toFixed(1)} KiB`
+    : `${(bytes / (1 << 20)).toFixed(2)} MiB`;
+}
+
+const jsonAsArtifact = (name) =>
+  `${name}.bench.incremental.${equivalentJsonAsTier}.wasm`;
+const vec3Artifact = runJsonAsArtifact(jsonAsArtifact("vec3"));
+const deserializeArtifact = runJsonAsArtifact(jsonAsArtifact("deserialize"));
+const serializeArtifact = runJsonAsArtifact(jsonAsArtifact("serialize"));
+const canadaArtifact = runJsonAsArtifact(jsonAsArtifact("canada"));
+const poetArtifact = runJsonAsArtifact(jsonAsArtifact("poet"));
+const vec3As = vec3Artifact.results;
+const deserializeAs = deserializeArtifact.results;
+const serializeAs = serializeArtifact.results;
+const canadaAs = canadaArtifact.results;
+const poetAs = poetArtifact.results;
 
 const jsonAs = {
   vec3: { parse: fastest(vec3As, "Deserialize Vec3"), serialize: fastest(vec3As, "Serialize Vec3") },
@@ -114,6 +134,14 @@ const jsonAs = {
   },
   canada: { parse: fastest(canadaAs, "Deserialize Canada (min)"), serialize: fastest(canadaAs, "Serialize Canada (min)") },
   poet: { parse: fastest(poetAs, "Deserialize Poet (min)"), serialize: fastest(poetAs, "Serialize Poet (min)") },
+};
+const jsonAsPeakLinearBytes = {
+  vec3: vec3Artifact.peakLinearBytes,
+  small: Math.max(deserializeArtifact.peakLinearBytes, serializeArtifact.peakLinearBytes),
+  medium: Math.max(deserializeArtifact.peakLinearBytes, serializeArtifact.peakLinearBytes),
+  large: Math.max(deserializeArtifact.peakLinearBytes, serializeArtifact.peakLinearBytes),
+  canada: canadaArtifact.peakLinearBytes,
+  poet: poetArtifact.peakLinearBytes,
 };
 
 const payloadDirectory = resolve(jsonAsRoot, "assembly/__benches__/payloads");
@@ -133,7 +161,8 @@ const cases = [
   },
 ].map((item) => ({ ...item, bytes: Buffer.byteLength(item.json) }));
 
-const runtime = new RawNodeBinding(readFileSync("build/parity/runtime.wasm"), { scratchCapacity: 16 << 20, heapReserve: 128 << 20 });
+const parityWasm = readFileSync("build/parity/runtime.wasm");
+const runtime = new RawNodeBinding(parityWasm, { scratchCapacity: 16 << 20, heapReserve: 128 << 20 });
 const schemas = createSchemaRegistry(JSON.parse(readFileSync("build/parity/schema-layouts.json", "utf8")));
 const release = runtime.exports.releaseDocument;
 const rows = [];
@@ -147,6 +176,24 @@ for (const item of cases) {
   const benchmarkParseOwned = runtime.exports[`benchmarkParse${parseSchema.name}`];
   const benchmarkParse = runtime.exports[`benchmarkParseInto${parseSchema.name}`];
   const benchmarkSerialize = runtime.exports[`benchmarkSerialize${schema.name}`];
+  const memoryRuntime = new RawNodeBinding(parityWasm);
+  const memoryInitialBytes = memoryRuntime.memory.buffer.byteLength;
+  const memoryLength = item.rootArray
+    ? memoryRuntime._writeRootValueInput(item.json)
+    : memoryRuntime._writeInput(item.json, false, 1);
+  const memoryDocument =
+    memoryRuntime.exports[`parse${schema.name}Trusted`](
+      memoryRuntime.scratch,
+      memoryLength,
+    ) >>> 0;
+  if (memoryDocument === 0) {
+    throw new Error(`${item.key} memory parse failed with status ${memoryRuntime._result(0)}`);
+  }
+  const memoryPeakBytes = memoryRuntime.memory.buffer.byteLength;
+  const memoryUsedBytes = memoryRuntime.u32[memoryDocument >>> 2] & 0x7fffffff;
+  const memoryReservedBytes =
+    (memoryRuntime.u32[(memoryDocument - 8) >>> 2] & 0x7fffffff) - 8;
+  memoryRuntime.release(memoryDocument);
   const batch = Math.max(1, Math.min(1024, Math.floor(1_000_000 / item.bytes)));
   const hostParsed = measure(item.bytes, () => {
     const document = parse(runtime.scratch, length) >>> 0;
@@ -193,6 +240,13 @@ for (const item of cases) {
       hostMbps: host.mbps,
       hostNsPerOp: host.nsPerOp,
       hostRatio: host.mbps / baseline,
+      memory: {
+        jsonTyInitialLinearBytes: memoryInitialBytes,
+        jsonTyPeakLinearBytes: memoryPeakBytes,
+        jsonTyDocumentUsedBytes: memoryUsedBytes,
+        jsonTyDocumentReservedBytes: memoryReservedBytes,
+        jsonAsArtifactPeakLinearBytes: jsonAsPeakLinearBytes[item.key],
+      },
       ...(kind === "parse"
         ? {
             ownedMbps: ownedParsed.mbps,
@@ -213,8 +267,26 @@ for (const row of rows) {
   const owned = row.kind === "parse" ? `, owned ${row.ownedRatio.toFixed(2)}x` : "";
   console.log(`${pass ? "PASS" : "FAIL"} ${row.payload.padEnd(7)} ${row.kind.padEnd(9)} kernel ${row.ratio.toFixed(2)}x${owned}, host ${row.hostRatio.toFixed(2)}x  ${Math.round(row.jsonTyMbps).toLocaleString()} vs ${Math.round(row.jsonAsMbps).toLocaleString()} MB/s`);
 }
+console.log("\nEager memory (json-ty owning Document; json-as complete benchmark artifact peak)");
+for (const row of rows.filter((candidate) => candidate.kind === "parse")) {
+  const { memory } = row;
+  console.log(
+    `MEM  ${row.payload.padEnd(7)} json-ty ${formatMemory(memory.jsonTyDocumentUsedBytes)} used / ` +
+    `${formatMemory(memory.jsonTyDocumentReservedBytes)} reserved / ` +
+    `${formatMemory(memory.jsonTyPeakLinearBytes)} peak; ` +
+    `json-as ${formatMemory(memory.jsonAsArtifactPeakLinearBytes)} artifact peak`,
+  );
+}
 
 mkdirSync("build/logs", { recursive: true });
-writeFileSync("build/logs/json-as-parity.json", JSON.stringify({ generatedAt: new Date().toISOString(), tierMetadata, minimumRatio, rows }, null, 2));
+const report = JSON.stringify({
+  generatedAt: new Date().toISOString(),
+  tierMetadata,
+  equivalentJsonAsTier,
+  minimumRatio,
+  rows,
+}, null, 2);
+writeFileSync("build/logs/json-as-parity.json", report);
+writeFileSync(`build/logs/json-as-parity-${equivalentJsonAsTier}.json`, report);
 if (failed !== 0) throw new Error(`${failed}/${rows.length} json-as parity gates failed`);
 console.log(`PASS ${rows.length}/${rows.length} resident kernel gates`);

@@ -12,7 +12,6 @@ if (scope !== "full" && scope !== "smoke") {
 }
 
 const variants = [
-  { label: "current", kernelTier: "simd", role: "pre-port-compatible current engine configuration" },
   { label: "naive", kernelTier: "naive", role: "RFC scalar oracle" },
   { label: "swar", kernelTier: "swar", role: "portable optimized default" },
   { label: "simd", kernelTier: "simd", role: "explicit fastest feature tier" },
@@ -143,8 +142,8 @@ for (const variant of variants) {
   report.variants.push(entry);
 }
 
-mkdirSync("benchmark/results", { recursive: true });
-const output = `benchmark/results/kernel-tier-${scope}.json`;
+mkdirSync("bench/results", { recursive: true });
+const output = `bench/results/kernel-tier-${scope}.json`;
 writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`);
 console.log(`\n> ${output}`);
 for (const variant of report.variants) {

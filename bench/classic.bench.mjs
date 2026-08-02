@@ -13,6 +13,9 @@ const maximumBytes = process.env.JSON_TY_CLASSIC_MAX_BYTES === undefined ? Numbe
 const inputKind = process.env.JSON_TY_CLASSIC_INPUT ?? "buffer";
 const eagerBackend = process.env.JSON_TY_CLASSIC_EAGER_BACKEND ?? "graph";
 if (inputKind !== "string" && inputKind !== "buffer") throw new Error("JSON_TY_CLASSIC_INPUT must be string or buffer");
+if (eagerBackend !== "graph" && eagerBackend !== "plain" && eagerBackend !== "host") {
+  throw new Error("JSON_TY_CLASSIC_EAGER_BACKEND must be graph or plain");
+}
 
 function selectedValues(name, defaults) {
   const value = process.env[name];
@@ -281,7 +284,7 @@ for (const corpus of selected) {
         const operation = graphBackend
           ? () => parseDynamicEager(nextInput())
           : () => parseDynamic(nextInput(), null, true);
-        results.push(measure(corpus, fixture.format, "deserialize", "eager", graphBackend ? "json-ty (validating eager graph)" : "json-ty (native plain backend)", fixture.bytes, operation));
+        results.push(measure(corpus, fixture.format, "deserialize", "eager", graphBackend ? "json-ty (validating eager graph)" : "json-ty (Wasm plain object)", fixture.bytes, operation));
       }
       if (selectedVariants.has("lazy")) {
         const operation = lazySchema ? () => parseTyped(lazySchema, residentInput) : () => parseDynamicRetained(residentInput);

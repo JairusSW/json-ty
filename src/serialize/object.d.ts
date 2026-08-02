@@ -1,1 +1,0 @@
-export function serializeObject<T>(data: Partial<T>, cls: new (...args: any[]) => T): string;

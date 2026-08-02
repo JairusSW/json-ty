@@ -7,5 +7,10 @@
     "experimentalDecorators": true,
     "noEmit": true
   },
-  "files": ["json-ty.d.ts", "analyzer.ts"]
+  "files": [
+    "json-ty.d.ts",
+    "analyzer.ts",
+    "inheritance-base.ts",
+    "inheritance.ts"
+  ]
 }

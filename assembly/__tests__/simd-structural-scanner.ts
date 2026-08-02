@@ -8,3 +8,19 @@ export function scan(start: usize, end: usize): usize {
 export function oracle(start: usize, end: usize): usize {
   return scanValueEnd_SWAR(start, end);
 }
+
+export function benchSimd(start: usize, end: usize, iterations: u32): u64 {
+  let checksum: u64 = 0;
+  for (let index: u32 = 0; index < iterations; index++) {
+    checksum += scanValueEnd_SIMD(start, end);
+  }
+  return checksum;
+}
+
+export function benchSwar(start: usize, end: usize, iterations: u32): u64 {
+  let checksum: u64 = 0;
+  for (let index: u32 = 0; index < iterations; index++) {
+    checksum += scanValueEnd_SWAR(start, end);
+  }
+  return checksum;
+}

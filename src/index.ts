@@ -60,8 +60,9 @@ export namespace JSON {
   }
 
   /**
-   * Erased schema marker for interfaces and type aliases, which cannot carry
-   * TypeScript decorators. json-tyc removes this call from emitted code.
+   * Optional erased schema marker. Interfaces and named object aliases used by
+   * typed JSON calls are discovered automatically; use this to pre-generate an
+   * otherwise unreachable schema. json-tyc removes the call from emitted code.
    */
   export function schema<T>(): void {}
 

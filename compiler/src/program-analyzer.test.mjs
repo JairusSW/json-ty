@@ -9,7 +9,7 @@ assert.equal(first.version, 6);
 assert.equal(first.hash, second.hash);
 assert.deepEqual(
   first.schemas.map((schema) => schema.name),
-  ["booleanValue", "Box__number", "Cat", "CompositeDefaults", "Config", "Dog", "LazyAll", "LazyAuto", "LazyConvenience", "LazyConvenienceAll", "LazyConvenienceNone", "LazyNone", "nullValue", "numberArray", "numberJsonArray", "numberValue", "Player", "PlayerArray", "Position", "stringValue"],
+  ["AuditedEntity", "booleanValue", "Box__number", "Cat", "CompositeDefaults", "Config", "Dog", "LazyAll", "LazyAuto", "LazyConvenience", "LazyConvenienceAll", "LazyConvenienceNone", "LazyNone", "Leaf", "Middle", "nullValue", "numberArray", "numberJsonArray", "numberValue", "Page__AuditedEntity", "Player", "PlayerArray", "Position", "stringValue"],
 );
 const playerArray = first.schemas.find((schema) => schema.name === "PlayerArray");
 assert.equal(playerArray.root, "array");
@@ -65,6 +65,32 @@ const compositeDefaults = first.schemas.find((schema) => schema.name === "Compos
 assert.deepEqual(compositeDefaults.fields.find((field) => field.name === "samples")?.defaultValue, [1, 2]);
 assert.deepEqual(compositeDefaults.fields.find((field) => field.name === "position")?.defaultValue, { x: 3, y: 4 });
 assert.deepEqual(compositeDefaults.fields.find((field) => field.name === "matrix")?.defaultValue, [[5], [6, 7]]);
+
+const auditedEntity = first.schemas.find((schema) => schema.name === "AuditedEntity");
+assert.equal(auditedEntity.declarationKind, "interface");
+assert.deepEqual(
+  auditedEntity.fields.map((field) => field.name),
+  ["id", "name", "createdAt", "note", "updatedAt"],
+);
+assert.notEqual(auditedEntity.fields.find((field) => field.name === "note")?.optional, true);
+const page = first.schemas.find((schema) => schema.name === "Page__AuditedEntity");
+assert.deepEqual(page.fields.find((field) => field.name === "items")?.type, {
+  kind: "array",
+  element: { kind: "object", typeName: "AuditedEntity" },
+  facade: "array",
+});
+const leaf = first.schemas.find((schema) => schema.name === "Leaf");
+assert.deepEqual(
+  leaf.fields.map((field) => field.name),
+  ["inherited", "constructorField", "value", "inheritedOptional", "middle", "leaf"],
+);
+assert.equal(leaf.fields.find((field) => field.name === "inherited")?.defaultValue, "middle");
+assert.equal(leaf.fields.find((field) => field.name === "constructorField")?.defaultValue, 5);
+assert.equal(leaf.fields.find((field) => field.name === "value")?.kind, "number");
+assert.equal(leaf.fields.find((field) => field.name === "value")?.jsonName, "base_value");
+assert.equal(leaf.fields.find((field) => field.name === "inheritedOptional")?.optional, true);
+assert.equal(leaf.fields.some((field) => field.name === "internal"), false);
+assert.equal(leaf.fields.some((field) => field.name === "secret"), false);
 
 const lazyAuto = first.schemas.find((schema) => schema.name === "LazyAuto");
 assert.equal(lazyAuto.decorators.lazyMode, "auto");

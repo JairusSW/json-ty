@@ -10,7 +10,7 @@ identity with the JavaScript standard library.
 | aliases, omit, omit-null, omit-if | implemented | pure omit-if expression required |
 | on-demand typed lazy parsing | implemented | `none`/`auto`/`all`, field overrides, `JSON.Lazy<T>`, one first-access Wasm call, range passthrough |
 | unknown decorators | implemented | preserved; affected fields become host-managed |
-| inheritance/interfaces/classes | implemented | constructor is not called; prototype can be bound |
+| inheritance/interfaces/classes | implemented | marker-free interfaces; multiple/generic interface bases; complete public class chain; constructor is not called; prototype can be bound |
 | concrete generics | implemented | each concrete instantiation receives a schema |
 | arrays of primitives/strings/records | implemented | real JS arrays by default |
 | top-level typed arrays | implemented | generated root schema, hidden owner, finalization backstop |
@@ -37,7 +37,7 @@ identity with the JavaScript standard library.
 | plain-object Wasm ingress | implemented | retained for workloads where benchmarking selects it |
 | generated JS writer | implemented | decorator and host-managed fallback |
 | explicit document reuse/release | implemented | split/coalescing free list and stale-view protection |
-| browser byte bridge | implemented | shared core, encodeInto/TextDecoder/fetch |
+| portable runtime binding | implemented and cross-runtime tested | one ESM/Wasm artifact; bytes, module, response, URL, request, blob, and local file loading across web APIs, Deno, Bun, and Node |
 | Date | native host fallback | no dedicated Wasm policy yet |
 | Map/Set policies | not implemented | require an explicit representation policy |
 | typed-array/binary codecs | not implemented | no implicit JSON representation selected |

@@ -1,5 +1,6 @@
 import { claimWriter } from "../writer";
 import { u16_to_hex4_swar } from "../../util/swar";
+import { serializeRetainedEscapedString_SWAR } from "../swar/string";
 
 const BACKSLASH: u8 = 0x5c;
 
@@ -123,6 +124,11 @@ export function serializeRetainedEscapedString_SIMD(source: usize, length: u32):
     while (end - pointer >= 16) {
       const mask = backslashMask(pointer);
       if (mask != 0) {
+        // Dense escape blocks favor the smaller scalar loop. Sparse escapes
+        // retain the SIMD skip that wins decisively on ordinary text.
+        if (popcnt(mask) >= 4) {
+          return serializeRetainedEscapedString_SWAR(source, length);
+        }
         const clean = <usize>ctz(mask);
         required += clean;
         pointer += clean;

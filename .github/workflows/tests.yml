@@ -7,14 +7,28 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    name: Node ${{ matrix.node }}
-    runs-on: ubuntu-latest
+  node-suite:
+    name: ${{ matrix.suite }} / Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node: [22.15, 24]
+        suite:
+          - typecheck
+          - test:raw
+          - test:compiler
+          - test:benchmark-plan
+          - test:swar-port
+          - test:rfc-oracle
+          - test:fuzz:raw:tiers
 
     steps:
       - name: Checkout
@@ -29,8 +43,151 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Run ${{ matrix.suite }}
+        run: npm run ${{ matrix.suite }}
 
-      - name: Test SIMD and scalar paths
-        run: npm run test:all
+  runtime-portability:
+    name: ${{ matrix.runtime }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        runtime: [Bun, Deno]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js build toolchain
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15
+          cache: npm
+
+      - name: Set up Bun
+        if: matrix.runtime == 'Bun'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Deno
+        if: matrix.runtime == 'Deno'
+        uses: denoland/setup-deno@v2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build portable Wasm fixture
+        run: npm run build:raw
+
+      - name: Test Bun
+        if: matrix.runtime == 'Bun'
+        run: bun ./src/raw/runtime-portability.test.mjs
+
+      - name: Test Deno
+        if: matrix.runtime == 'Deno'
+        run: deno run --allow-read ./src/raw/runtime-portability.test.mjs
+
+  browser-engines:
+    name: ${{ matrix.browser }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - browser: Chromium
+            target: chromium
+            install: chromium
+            os: ubuntu-latest
+          - browser: Chrome
+            target: chrome
+            install: chromium
+            os: ubuntu-latest
+          - browser: Firefox
+            target: firefox
+            install: firefox
+            os: ubuntu-latest
+          - browser: WebKit
+            target: webkit
+            install: webkit
+            os: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser engine
+        run: npx playwright install --with-deps ${{ matrix.install }}
+
+      - name: Build SIMD browser fixture
+        run: npm run build:raw
+        env:
+          JSON_TY_KERNEL_TIER: simd
+
+      - name: Test ${{ matrix.browser }}
+        run: node ./scripts/run-browser-runtime-tests.mjs ${{ matrix.target }}
+
+  edge:
+    name: Edge / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build SIMD browser fixture
+        run: npm run build:raw
+        env:
+          JSON_TY_KERNEL_TIER: simd
+
+      - name: Test Edge
+        run: npm run test:browser:edge
+
+  safari:
+    name: Safari / macos-latest
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Enable Safari WebDriver
+        run: sudo safaridriver --enable
+
+      - name: Build SIMD browser fixture
+        run: npm run build:raw
+        env:
+          JSON_TY_KERNEL_TIER: simd
+
+      - name: Test Safari
+        run: npm run test:browser:safari

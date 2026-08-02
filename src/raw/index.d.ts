@@ -66,7 +66,7 @@ export interface SchemaLayout<T extends object = Record<string, unknown>> {
     serialize: string;
     materialize?: string;
   };
-  View: new (runtime: RawNodeBinding, document: number, root: number, asciiSource?: string | null) => T & JsonDocumentView;
+  View: new (runtime: RawBinding, document: number, root: number, asciiSource?: string | null) => T & JsonDocumentView;
   Class?: abstract new (...arguments_: never[]) => T;
 }
 
@@ -75,7 +75,7 @@ export interface JsonDocumentView {
   dispose(): void;
 }
 
-export interface RawNodeBindingOptions {
+export interface RawBindingOptions {
   control?: number;
   scratch?: number;
   scratchCapacity?: number;
@@ -84,9 +84,10 @@ export interface RawNodeBindingOptions {
   /** `view` is fastest; `enumerable` makes Object.keys/spread expose fields. */
   objectShape?: "view" | "enumerable";
 }
+export type RawNodeBindingOptions = RawBindingOptions;
 
 export class RawNodeBinding {
-  constructor(wasm: Uint8Array | ArrayBuffer | WebAssembly.Module, options?: RawNodeBindingOptions);
+  constructor(wasm: Uint8Array | ArrayBuffer | WebAssembly.Module, options?: RawBindingOptions);
   readonly memory: WebAssembly.Memory;
   readonly u8: Uint8Array;
   readonly scratch: number;
@@ -149,9 +150,21 @@ export function createObjectView<T extends object>(schema: Omit<SchemaLayout<T>,
 export function bindSchemaClass<T extends object>(schema: SchemaLayout<T>, constructor: abstract new (...arguments_: never[]) => T): SchemaLayout<T>;
 export function createSchemaRegistry(layouts: Array<Omit<SchemaLayout, "View">>, options?: { views?: boolean }): Map<string, SchemaLayout>;
 export function instantiateRawNodeBinding(wasm: Uint8Array | ArrayBuffer | WebAssembly.Module, options?: RawNodeBindingOptions): RawNodeBinding;
+export type RawBinding = RawNodeBinding;
+export const RawBinding: typeof RawNodeBinding;
+
+export interface RawWasmBody {
+  readonly ok?: boolean;
+  readonly status?: number;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  clone?(): RawWasmBody;
+}
+export type RawWasmSource = Uint8Array | ArrayBuffer | ArrayBufferView | WebAssembly.Module | Response | Request | URL | string | RawWasmBody;
+export function loadRawWasm(source: RawWasmSource | PromiseLike<RawWasmSource>): Promise<Uint8Array | ArrayBuffer | WebAssembly.Module>;
+export function instantiateRawBinding(source: RawWasmSource | PromiseLike<RawWasmSource>, options?: RawBindingOptions): Promise<RawBinding>;
 
 export class GeneratedViewBase {
-  constructor(schema: SchemaLayout, runtime: RawNodeBinding, document: number, root: number, asciiSource?: string | null, state?: object, ownsDocument?: boolean);
+  constructor(schema: SchemaLayout, runtime: RawBinding, document: number, root: number, asciiSource?: string | null, state?: object, ownsDocument?: boolean);
 }
 export function generatedViewDocument(view: object): number;
 export function disposeGeneratedView(view: object): void;
@@ -173,4 +186,4 @@ export const RAW_OVERLAY: unique symbol;
 export const RAW_STATE: unique symbol;
 export const RAW_SERIALIZED: unique symbol;
 export function activeDocument(view: object, operation: string): number;
-export function decodeStringRef(runtime: RawNodeBinding, document: number, pointer: number, asciiSource: string | null): string;
+export function decodeStringRef(runtime: RawBinding, document: number, pointer: number, asciiSource: string | null): string;

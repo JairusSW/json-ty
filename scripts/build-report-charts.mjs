@@ -257,7 +257,7 @@ function geometricMean(values) {
 }
 
 function chartTiers() {
-  const report = read("benchmark/results/kernel-tier-full.json");
+  const report = read("bench/results/kernel-tier-full.json");
   const variants = report.variants.filter(({ label }) => label !== "current");
   const artifacts = ["rfc", "raw", "overview", "classic", "parity"];
   const artifactLabels = ["RFC oracle", "Raw", "Overview", "Classic", "Parity"];

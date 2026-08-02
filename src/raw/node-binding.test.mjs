@@ -364,6 +364,18 @@ assert.ok(
 retainedDynamic.dispose();
 
 assert.deepEqual(runtime.parseDynamic(Buffer.from('[5e-324,{"ok":false}]'), { plain: true }), [5e-324, { ok: false }]);
+const nativeParse = globalThis.JSON.parse;
+globalThis.JSON.parse = () => {
+  throw new Error("plain dynamic parsing must not delegate to native JSON.parse");
+};
+try {
+  assert.deepEqual(
+    runtime.parseDynamic('{"escaped":"line\\nfeed","unicode":"\\ud83d\\ude00","items":[1,true,null]}', { plain: true }),
+    { escaped: "line\nfeed", unicode: "😀", items: [1, true, null] },
+  );
+} finally {
+  globalThis.JSON.parse = nativeParse;
+}
 const eagerDynamic = runtime.parseDynamic(Buffer.from(dynamicInput), { eager: true });
 const eagerCursor = runtime.u32[(eagerDynamic._document() + 16) >>> 2];
 assert.deepEqual(eagerDynamic.toObject(), JSON.parse(dynamicInput));

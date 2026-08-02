@@ -143,7 +143,7 @@ cp -R "$TMP_CHARTS_DIR/." "$TMP_DOCS_DIR/charts/$DEST/"
 
 RAW_ROOT="https://raw.githubusercontent.com/JairusSW/json-ty/refs/heads/${DOCS_BRANCH}/charts/${DEST}"
 echo "Pinning README chart URLs to $RAW_ROOT..."
-sed -i -E "s#src=\"(\\./benchmark/charts/|https://raw.githubusercontent.com/JairusSW/json-ty/refs/heads/${DOCS_BRANCH}/charts/([^/]*/)?)([^\"]+\\.(svg|png))\"#src=\"${RAW_ROOT}/\\3\"#g" README.md
+sed -i -E "s#src=\"(\\./bench/charts/|https://raw.githubusercontent.com/JairusSW/json-ty/refs/heads/${DOCS_BRANCH}/charts/([^/]*/)?)([^\"]+\\.(svg|png))\"#src=\"${RAW_ROOT}/\\3\"#g" README.md
 
 echo "Benchmark charts published to ${REMOTE_NAME}/${DOCS_BRANCH}:charts/${DEST}/."
 echo "README chart URLs were updated for review."

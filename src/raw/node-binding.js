@@ -286,26 +286,13 @@ export class RawNodeBinding {
     if (options.validate === false) {
       throw new TypeError("parseDynamic validation cannot be disabled");
     }
-    if (options.plain) {
-      try {
-        const source = typeof input === "string" ? input : input instanceof Uint8Array ? this._byteBridge.decodeFatal(input) : null;
-        if (source === null) {
-          throw new TypeError("Expected a string, Buffer, or Uint8Array");
-        }
-        return globalThis.JSON.parse(source);
-      } catch (error) {
-        if (error instanceof SyntaxError) throw error;
-        if (error instanceof TypeError && input instanceof Uint8Array) {
-          throw new SyntaxError(`Invalid UTF-8 JSON input: ${error.message}`);
-        }
-        throw error;
-      }
-    }
     if (typeof this._parseDynamic !== "function") throw new Error("Dynamic JSON was not compiled into this runtime");
     const stringInput = typeof input === "string";
     const length = this._writeInput(input, false, INPUT_JSON);
     const trustedInput = stringInput;
-    const retained = options.eager === false;
+    // Plain values consume the complete graph immediately, so building it in
+    // the parsing pass avoids deferred-container calls during materialization.
+    const retained = options.plain !== true && options.eager === false;
     if (retained && typeof this._parseDynamicRetained !== "function") {
       throw new Error("Retained dynamic JSON was not compiled into this runtime");
     }
@@ -328,6 +315,14 @@ export class RawNodeBinding {
     const residentSource = this._byteBridge.scratchInputSource;
     const asciiSource = stringInput && length === residentSource.length ? residentSource : null;
     const state = { document, ownsDocument: true };
+    if (options.plain === true) {
+      try {
+        return dynamicSlotToJS(this, state, root, asciiSource);
+      } finally {
+        this.release(document);
+        state.document = 0;
+      }
+    }
     const view = dynamicView(this, state, root, asciiSource);
     return view;
   }
@@ -671,7 +666,48 @@ export function decodeStringRef(runtime, document, pointer, asciiSource) {
   const rawPointer = (document + offset) >>> 0;
   const sourceOffset = runtime.u32[(document + 4) >>> 2];
   const raw = asciiSource === null || arena ? runtime._decodeUtf8(rawPointer, rawPointer + length) : asciiSource.slice(offset - sourceOffset, offset - sourceOffset + length);
-  return escaped ? globalThis.JSON.parse(`"${raw}"`) : raw;
+  return escaped ? decodeEscapedJsonString(raw) : raw;
+}
+
+function decodeEscapedJsonString(raw) {
+  let slash = raw.indexOf("\\");
+  if (slash < 0) return raw;
+  let output = raw.slice(0, slash);
+  let segment = slash;
+  while (slash < raw.length) {
+    output += raw.slice(segment, slash);
+    const escape = raw.charCodeAt(slash + 1);
+    if (escape === 0x75) {
+      let code = 0;
+      for (let index = slash + 2; index < slash + 6; index++) {
+        const digit = raw.charCodeAt(index);
+        code = (code << 4) | (digit <= 0x39 ? digit - 0x30 : (digit | 0x20) - 0x57);
+      }
+      output += String.fromCharCode(code);
+      segment = slash + 6;
+    } else {
+      output +=
+        escape === 0x22
+          ? '"'
+          : escape === 0x5c
+            ? "\\"
+            : escape === 0x2f
+              ? "/"
+              : escape === 0x62
+                ? "\b"
+                : escape === 0x66
+                  ? "\f"
+                  : escape === 0x6e
+                    ? "\n"
+                    : escape === 0x72
+                      ? "\r"
+                      : "\t";
+      segment = slash + 2;
+    }
+    slash = raw.indexOf("\\", segment);
+    if (slash < 0) return output + raw.slice(segment);
+  }
+  return output + raw.slice(segment);
 }
 
 function readArrayElement(view, type, header, index) {

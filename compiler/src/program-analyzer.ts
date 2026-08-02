@@ -14,9 +14,94 @@ export interface ProgramAnalysis {
   reachableTypes: ReadonlyMap<ts.Type, string>;
 }
 
+type SchemaMember =
+  | ts.PropertyDeclaration
+  | ts.PropertySignature
+  | ts.ParameterDeclaration;
+
 function schemaDeclarationOf(type: ts.Type): ts.Declaration | undefined {
   const symbol = type.aliasSymbol ?? type.getSymbol();
   return symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+}
+
+function isSchemaMember(node: ts.Declaration): node is SchemaMember {
+  if (ts.isPropertyDeclaration(node) || ts.isPropertySignature(node)) {
+    return true;
+  }
+  if (!ts.isParameter(node) || !ts.isConstructorDeclaration(node.parent)) {
+    return false;
+  }
+  const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) : undefined;
+  return modifiers?.some((modifier) =>
+    modifier.kind === ts.SyntaxKind.PublicKeyword ||
+    modifier.kind === ts.SyntaxKind.PrivateKeyword ||
+    modifier.kind === ts.SyntaxKind.ProtectedKeyword ||
+    modifier.kind === ts.SyntaxKind.ReadonlyKeyword
+  ) ?? false;
+}
+
+function memberName(member: SchemaMember): string | undefined {
+  if (!member.name) return undefined;
+  return ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)
+    ? member.name.text
+    : undefined;
+}
+
+function inheritedPropertyOrder(
+  checker: ts.TypeChecker,
+  root: ts.Declaration,
+): ReadonlyMap<string, number> {
+  const order = new Map<string, number>();
+  const visited = new Set<ts.Declaration>();
+  const visit = (declaration: ts.Declaration): void => {
+    if (visited.has(declaration)) return;
+    visited.add(declaration);
+    if (
+      ts.isClassDeclaration(declaration) ||
+      ts.isInterfaceDeclaration(declaration)
+    ) {
+      for (const clause of declaration.heritageClauses ?? []) {
+        if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const heritageType of clause.types) {
+          const base = schemaDeclarationOf(
+            checker.getTypeAtLocation(heritageType),
+          );
+          if (base) visit(base);
+        }
+      }
+      for (const member of declaration.members) {
+        if (isSchemaMember(member)) {
+          const name = memberName(member);
+          if (name !== undefined && !order.has(name)) {
+            order.set(name, order.size);
+          }
+        } else if (ts.isConstructorDeclaration(member)) {
+          for (const parameter of member.parameters) {
+            if (!isSchemaMember(parameter)) continue;
+            const name = memberName(parameter);
+            if (name !== undefined && !order.has(name)) {
+              order.set(name, order.size);
+            }
+          }
+        }
+      }
+    }
+  };
+  visit(root);
+  return order;
+}
+
+function declarationKind(
+  declaration: ts.Declaration,
+): ObjectSchema["declarationKind"] {
+  if (ts.isClassDeclaration(declaration)) return "class";
+  if (ts.isInterfaceDeclaration(declaration)) return "interface";
+  return "type";
+}
+
+function isImplicitTypeSchema(declaration: ts.Declaration): boolean {
+  return ts.isInterfaceDeclaration(declaration) ||
+    ts.isTypeAliasDeclaration(declaration);
 }
 
 function moduleSpecifierOf(node: ts.Node): string | undefined {
@@ -174,7 +259,11 @@ function lazyAutoCost(type: TypeRef, schemas: ReadonlyMap<string, ObjectSchema>)
   return score;
 }
 
-function fieldDecoratorMetadata(member: ts.PropertyDeclaration | ts.PropertySignature, imports: ReadonlyMap<string, string>, sourceFile: ts.SourceFile): FieldDecorators {
+function fieldDecoratorMetadata(
+  member: SchemaMember,
+  imports: ReadonlyMap<string, string>,
+  sourceFile: ts.SourceFile,
+): FieldDecorators {
   const result: FieldDecorators = {};
   for (const decorator of decoratorInfo(member, imports)) {
     const argument = decorator.call?.arguments[0];
@@ -283,7 +372,10 @@ function compileOmitIfPlan(text: string, parameter: string, fields: readonly Sch
   return visit(initializer);
 }
 
-function hasLazyTypeWrapper(member: ts.PropertyDeclaration | ts.PropertySignature, imports: ReadonlyMap<string, string>): boolean {
+function hasLazyTypeWrapper(
+  member: SchemaMember,
+  imports: ReadonlyMap<string, string>,
+): boolean {
   const visit = (node: ts.TypeNode | undefined): boolean => {
     if (!node) return false;
     if (ts.isParenthesizedTypeNode(node)) return visit(node.type);
@@ -396,13 +488,22 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
   const queued: Array<{ type: ts.Type; declaration: ts.Declaration }> = [];
   const explicitSchemaDeclarations = new Set<ts.Declaration>();
   const explicitSchemaTypes: Array<{ type: ts.Type; declaration: ts.Declaration }> = [];
+  const importsBySourceFile = new Map<ts.SourceFile, Map<string, string>>();
+  const importsFor = (sourceFile: ts.SourceFile): Map<string, string> => {
+    let imports = importsBySourceFile.get(sourceFile);
+    if (!imports) {
+      imports = jsonTyImports(sourceFile);
+      importsBySourceFile.set(sourceFile, imports);
+    }
+    return imports;
+  };
 
-  // Discovery is deliberately separate from graph construction. A schema is
-  // eligible only when its declaration has @json/@serializable or its type is
-  // named by JSON.schema<T>(); references never opt a class in accidentally.
+  // Discovery is deliberately separate from graph construction. Classes opt
+  // in through @json/@serializable (inherited by subclasses); interfaces and
+  // named object aliases are eligible when the typed graph reaches them.
   for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue;
-    const imports = jsonTyImports(sourceFile);
+    const imports = importsFor(sourceFile);
     const discover = (node: ts.Node): void => {
       if ((ts.isClassDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name && decoratorInfo(node, imports).some((item) => item.name === "json" || item.name === "serializable")) {
         explicitSchemaDeclarations.add(node);
@@ -422,6 +523,37 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     discover(sourceFile);
   }
 
+  const inheritsExplicitSchema = (
+    declaration: ts.Declaration,
+    seen = new Set<ts.Declaration>(),
+  ): boolean => {
+    if (!ts.isClassDeclaration(declaration) || seen.has(declaration)) {
+      return false;
+    }
+    seen.add(declaration);
+    for (const clause of declaration.heritageClauses ?? []) {
+      if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+      for (const heritageType of clause.types) {
+        const base = schemaDeclarationOf(
+          checker.getTypeAtLocation(heritageType),
+        );
+        if (
+          base &&
+          (explicitSchemaDeclarations.has(base) ||
+            inheritsExplicitSchema(base, seen))
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const isEligibleSchema = (declaration: ts.Declaration): boolean =>
+    explicitSchemaDeclarations.has(declaration) ||
+    isImplicitTypeSchema(declaration) ||
+    inheritsExplicitSchema(declaration);
+
   const enqueue = (type: ts.Type, declaration?: ts.Declaration): string => {
     const symbol = type.aliasSymbol ?? type.getSymbol();
     const name = symbol ? schemaNameForType(checker, type) : undefined;
@@ -433,8 +565,8 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
       throw new Error(`Schema name collision for ${name}: ${owner.identity} and ${identity}. ` + `json-ty requires unambiguous generated schema names; rename one declaration or expose it through a distinct named alias.`);
     }
     schemaNameOwners.set(name, { identity, declaration: selected });
-    if (!explicitSchemaDeclarations.has(selected)) {
-      throw new Error(`Structured JSON type ${checker.typeToString(type)} is not an explicit schema; add @json to its class or JSON.schema<${checker.typeToString(type)}>() for an interface/type alias`);
+    if (!isEligibleSchema(selected)) {
+      throw new Error(`Structured JSON class ${checker.typeToString(type)} is not serializable; add @json to it or one of its base classes`);
     }
     if (!reachableTypes.has(type)) {
       reachableTypes.set(type, name);
@@ -554,7 +686,7 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
 
   for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue;
-    const imports = jsonTyImports(sourceFile);
+    const imports = importsFor(sourceFile);
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node) && node.typeArguments?.length === 1) {
         const expression = node.expression;
@@ -638,19 +770,42 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
     const name = reachableTypes.get(type)!;
     if (schemas.has(name)) continue;
     const sourceFile = declaration.getSourceFile();
-    const imports = jsonTyImports(sourceFile);
+    const imports = importsFor(sourceFile);
     const fields: SchemaField[] = [];
-    for (const property of checker.getPropertiesOfType(type)) {
+    const inheritedOrder = inheritedPropertyOrder(checker, declaration);
+    const properties = checker.getPropertiesOfType(type)
+      .map((property, fallbackOrder) => ({ property, fallbackOrder }))
+      .sort((left, right) => {
+        const leftOrder = inheritedOrder.get(left.property.getName());
+        const rightOrder = inheritedOrder.get(right.property.getName());
+        if (leftOrder === undefined && rightOrder === undefined) {
+          return left.fallbackOrder - right.fallbackOrder;
+        }
+        if (leftOrder === undefined) return 1;
+        if (rightOrder === undefined) return -1;
+        return leftOrder - rightOrder;
+      })
+      .map(({ property }) => property);
+    for (const property of properties) {
       const member = property.valueDeclaration ?? property.declarations?.[0];
-      if (!member || (!ts.isPropertyDeclaration(member) && !ts.isPropertySignature(member))) continue;
-      if (!member.name || (!ts.isIdentifier(member.name) && !ts.isStringLiteral(member.name))) continue;
+      if (!member || !isSchemaMember(member)) continue;
+      const declaredName = memberName(member);
+      if (declaredName === undefined) continue;
       const modifiers = ts.canHaveModifiers(member) ? ts.getModifiers(member) : undefined;
       if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.PrivateKeyword || modifier.kind === ts.SyntaxKind.ProtectedKeyword)) continue;
-      const decorators = fieldDecoratorMetadata(member, imports, sourceFile);
-      if (hasLazyTypeWrapper(member, imports)) decorators.lazy = true;
+      const memberSourceFile = member.getSourceFile();
+      const memberImports = importsFor(memberSourceFile);
+      const decorators = fieldDecoratorMetadata(
+        member,
+        memberImports,
+        memberSourceFile,
+      );
+      if (hasLazyTypeWrapper(member, memberImports)) decorators.lazy = true;
       const allDecorators = ts.canHaveDecorators(member) ? (ts.getDecorators(member) ?? []) : [];
-      const knownDecoratorCount = decoratorInfo(member, imports).length;
-      const fieldType = toTypeRef(checker.getTypeOfSymbolAtLocation(property, member));
+      const knownDecoratorCount = decoratorInfo(member, memberImports).length;
+      const fieldType = toTypeRef(
+        checker.getTypeOfSymbolAtLocation(property, member),
+      );
       const optional = Boolean(member.questionToken) || fieldType.optional || decorators.optional;
       const fieldName = property.getName();
       fields.push({
@@ -660,7 +815,10 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
         type: fieldType.ref,
         nullable: fieldType.nullable,
         optional,
-        defaultValue: ts.isPropertyDeclaration(member) ? literalValue(member.initializer, checker) : undefined,
+        defaultValue: ts.isPropertyDeclaration(member) ||
+          ts.isParameter(member)
+          ? literalValue(member.initializer, checker)
+          : undefined,
         decorators,
         hostManaged: allDecorators.length > knownDecoratorCount || undefined,
       });
@@ -677,9 +835,12 @@ export function analyzeProgram(program: ts.Program, options: AnalyzeProgramOptio
       name,
       fields,
       sourceFile: sourceFile.fileName,
-      declarationKind: ts.isClassDeclaration(declaration) ? "class" : "interface",
+      declarationKind: declarationKind(declaration),
       decorators: {
-        json: explicitSchemaDeclarations.has(declaration) || classDecorators.some((item) => item.name === "json" || item.name === "serializable"),
+        json: isEligibleSchema(declaration) ||
+          classDecorators.some((item) =>
+            item.name === "json" || item.name === "serializable"
+          ),
         lazyMode,
       },
     });

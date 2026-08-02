@@ -21,7 +21,7 @@ export const PUBLICATION_REPORTS = Object.freeze({
   "classic-v8": "build/logs/classic-v8.json",
   lazy: "build/logs/lazy.json",
   parity: "build/logs/json-as-parity.json",
-  tiers: "benchmark/results/kernel-tier-full.json",
+  tiers: "bench/results/kernel-tier-full.json",
 });
 
 export const CHART_NAMES = Object.freeze([
@@ -77,6 +77,9 @@ export function workloadPlan(name, smoke) {
             ...smokeEnv,
             JSON_TY_OVERVIEW_FILTER: "small,medium,large",
           } : {}),
+          ...(!smoke
+            ? [command("performance gate", "node", ["./scripts/check-overview-threshold.mjs"])]
+            : []),
         ],
       };
     case "raw":
@@ -100,6 +103,9 @@ export function workloadPlan(name, smoke) {
             JSON_TY_CLASSIC_FILTER: "twitter,canada,poet",
             JSON_TY_CLASSIC_MAX_BYTES: "4000000",
           } : {}),
+          ...(!smoke
+            ? [command("performance gate", "node", ["./scripts/check-classic-threshold.mjs"])]
+            : []),
         ],
       };
     case "classic-v8":
@@ -113,6 +119,20 @@ export function workloadPlan(name, smoke) {
             ...smokeEnv,
             JSON_TY_CLASSIC_FILTER: "twitter,canada,poet",
           } : {}),
+          ...(!smoke
+            ? [
+                command("native parse gate", "node", ["./scripts/check-classic-v8-threshold.mjs"]),
+                command("dynamic parse gate", "node", [
+                  "./scripts/check-classic-dynamic-threshold.mjs",
+                ]),
+                command("json-as parse gate", "node", [
+                  "./scripts/check-classic-json-as-threshold.mjs",
+                ]),
+                command("serialization gate", "node", [
+                  "./scripts/check-classic-v8-serialize-threshold.mjs",
+                ]),
+              ]
+            : []),
         ],
       };
     case "lazy":
@@ -136,7 +156,7 @@ export function workloadPlan(name, smoke) {
     case "tiers":
       return {
         compiler: false,
-        reports: [smoke ? "benchmark/results/kernel-tier-smoke.json" : PUBLICATION_REPORTS.tiers],
+        reports: [smoke ? "bench/results/kernel-tier-smoke.json" : PUBLICATION_REPORTS.tiers],
         steps: [
           command("measure", "node", ["./scripts/run-kernel-tier-harness.mjs"], {
             JSON_TY_TIER_HARNESS_SCOPE: smoke ? "smoke" : "full",

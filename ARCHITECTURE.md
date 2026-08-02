@@ -59,12 +59,14 @@ field-write state transitions. The raw adapter retains specialized hot getters,
 while the generated adapter retains emitted fixed-offset getters; both delegate
 mutations to the same invariant owner.
 
-Node and browser bindings are thin adapters over one internal host-byte bridge.
+Portable and browser bindings are thin adapters over one internal host-byte bridge.
 The bridge owns memory-view refresh after growth, UTF-8 ingress and egress,
 scratch-input residency, result-header access, root envelopes, and raw versus
-JSON input modes. The Node adapter injects its Buffer-accelerated codec; the
-browser adapter explicitly injects TextEncoder/TextDecoder and has no Buffer
-dependency.
+JSON input modes. The portable adapter selects an available Buffer acceleration
+without depending on it; the browser adapter explicitly injects
+TextEncoder/TextDecoder. Generated runtimes load their sibling Wasm through
+standard URLs, using fetch for network assets and the native host reader for
+local file URLs.
 
 ## AssemblyScript kernel library
 
@@ -114,7 +116,7 @@ first-out release with no intervening free blocks rewinds the bump pointer
 directly, avoiding free-list insertion and splitting for short-lived documents.
 
 Typed documents use only relative 32-bit offsets, so a memory grow does not
-invalidate internal references. The Node/browser binding refreshes its Buffer,
+invalidate internal references. The host binding refreshes its optional Buffer,
 typed arrays, and DataView-equivalent access after growth.
 
 ## Document layout v5
@@ -243,14 +245,14 @@ Ambiguous long/wide decimals call the raw-pointer `parseNumberSlow` host import,
 which delegates only that number to the engine's correctly rounded conversion.
 No AssemblyScript string is created.
 
-Node string input is scanned for lone UTF-16 surrogates. The rare case is
+Host string input is scanned for lone UTF-16 surrogates. The rare case is
 rewritten to JSON `\\uXXXX` escapes before UTF-8 encoding, preserving native JSON
-semantics without changing the well-formed path. Raw Buffer/Uint8Array input is
-strictly UTF-8 validated. Because JavaScript strings are immutable, the Node
+semantics without changing the well-formed path. Raw byte-array input is
+strictly UTF-8 validated. Because JavaScript strings are immutable, the host
 binding keeps the most recent encoded JSON string resident in operation
 scratch. Repeated parsing of that value skips surrogate classification and
 UTF-8 encoding but still runs the complete Wasm parser and creates an
-independently releasable document. Buffer/Uint8Array ingress, root-envelope
+independently releasable document. Byte-array ingress, root-envelope
 construction, and every scratch writer invalidate the resident input.
 
 ## Serialization

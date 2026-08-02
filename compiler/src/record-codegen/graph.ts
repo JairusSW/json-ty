@@ -106,12 +106,14 @@ let graphFault: u32 = 0;
 let graphDepth: u32 = 0;
 let graphOrdered: bool = true;
 let graphBoundaryTrusted: bool = false;
+let graphOutOfSpace: bool = false;
 
 @inline
 function graphAllocate(size: usize, alignment: usize = 8): usize {
   const pointer = (graphCursor + alignment - 1) & ~(alignment - 1);
   const next = pointer + size;
   if (next < pointer || next > graphScratch) {
+    graphOutOfSpace = true;
     graphFault = <u32>(graphCursor - graphSource);
     return 0;
   }
@@ -122,9 +124,13 @@ function graphAllocate(size: usize, alignment: usize = 8): usize {
 
 @inline
 function graphReserveScratch(size: usize, alignment: usize = 8): usize {
-  if (size > graphScratch) return 0;
+  if (size > graphScratch) {
+    graphOutOfSpace = true;
+    return 0;
+  }
   const pointer = (graphScratch - size) & ~(alignment - 1);
   if (pointer < graphCursor || pointer > graphScratch) {
+    graphOutOfSpace = true;
     graphFault = <u32>(graphCursor - graphSource);
     return 0;
   }
@@ -520,35 +526,37 @@ ${fields}
 
 function generateArrayParser(type: TypeRef & { kind: "array" }, name: string, layouts: ReadonlyMap<string, ObjectLayout>, arrays: ArrayRegistry): string {
   const stride = type.elements ? 16 : elementStride(type.element);
-  const element = parseValue(type.element, `data + <usize>index * ${stride}`, layouts, arrays).replace(/\bcursor\b/g, "elementCursor");
+  const element = parseValue(type.element, "elementSlot", layouts, arrays).replace(/\bcursor\b/g, "elementCursor");
   if (!type.elements) {
-    // Materialize once into stack-disciplined high scratch, then flatten the
-    // exact number of slots into the low arena. Nested arrays recursively use
-    // the space below their parent's scratch span and release it on return.
-    // This gives flat contiguous output without the old full validation/count
-    // scan or pathological permanent upper-bound allocations.
-    const minimumWidth = type.element.kind === "boolean" ? 5 : type.element.kind === "number" ? 2 : 3;
+    // Materialize actual elements into small stack-disciplined high-scratch
+    // chunks. Nested arrays use and release space below the parent's live
+    // chunks. Chunks arrive in reverse address order but their slots remain in
+    // source order, so final flattening uses one bulk copy per 16 elements.
     const elementKind = type.element.kind === "null" ? 0 : type.element.kind === "number" ? 1 : type.element.kind === "boolean" ? 2 : type.element.kind === "string" ? 3 : type.element.kind === "object" ? 4 : type.element.kind === "union" ? 7 : 5;
+    const chunkBytes = stride * 16;
     return `
 function parse${name}(cursor: usize, end: usize, destination: usize): usize {
   if (graphDepth >= 256) return graphFailure(cursor);
   graphDepth++;
   if (cursor >= end || load<u8>(cursor) != 0x5b) return graphFailure(cursor);
-  const maximumCount = <u32>((end - cursor) / ${minimumWidth});
   const savedScratch = graphScratch;
-  const temporary = graphReserveScratch(<usize>maximumCount * ${stride}, ${Math.min(stride, 8)});
-  if (maximumCount != 0 && temporary == 0) return 0;
 
   let count: u32 = 0;
+  let scratchChunk: usize = 0;
+  let scratchChunkUsed: u32 = 16;
   let elementCursor = skipWhitespace(cursor + 1, end);
   if (elementCursor < end && load<u8>(elementCursor) == 0x5d) {
     elementCursor++;
   } else {
     while (true) {
-      if (count >= maximumCount) return graphFailure(elementCursor);
-      const index = count;
-      const data = temporary;
+      if (scratchChunkUsed == 16) {
+        scratchChunk = graphReserveScratch(${chunkBytes}, ${Math.min(stride, 8)});
+        if (scratchChunk == 0) return 0;
+        scratchChunkUsed = 0;
+      }
+      const elementSlot = scratchChunk + <usize>scratchChunkUsed * ${stride};
       ${element.replaceAll("\n", "\n      ")}
+      scratchChunkUsed++;
       count++;
       elementCursor = skipWhitespace(elementCursor, end);
       if (elementCursor >= end) return graphFailure(elementCursor);
@@ -564,7 +572,20 @@ function parse${name}(cursor: usize, end: usize, destination: usize): usize {
   const header = graphAllocate(16, 8);
   const data = graphAllocate(<usize>count * ${stride}, ${Math.min(stride, 8)});
   if (header == 0 || (count != 0 && data == 0)) return 0;
-  if (count != 0) memory.copy(data, temporary, <usize>count * ${stride});
+  let remaining = count;
+  let copied: u32 = 0;
+  let chunkSource = savedScratch - ${chunkBytes};
+  while (remaining != 0) {
+    const chunkCount = remaining < 16 ? remaining : 16;
+    memory.copy(
+      data + <usize>copied * ${stride},
+      chunkSource,
+      <usize>chunkCount * ${stride},
+    );
+    copied += chunkCount;
+    remaining -= chunkCount;
+    if (remaining != 0) chunkSource -= ${chunkBytes};
+  }
   initializeArray(header, graphDocument, ${elementKind}, count, data, ${stride});
   store<u32>(destination, <u32>(header - graphDocument));
   store<u32>(destination + 4, count);
@@ -619,7 +640,7 @@ function fail${layout.name}Graph(document: u32, status: u32, fault: u32, require
   return failResult(status, fault, required);
 }
 
-function parse${layout.name}Core(source: u32, length: u32, trustedStringInput: bool, borrowSource: bool, output: u32, outputCapacity: u32): u32 {
+function parse${layout.name}Core(source: u32, length: u32, trustedStringInput: bool, borrowSource: bool, output: u32, outputCapacity: u32, conservativeCapacity: bool = false): u32 {
   setStringInputTrusted(trustedStringInput);
   if (length > 0x0fffffff) {
     resetResult();
@@ -627,9 +648,14 @@ function parse${layout.name}Core(source: u32, length: u32, trustedStringInput: b
   }
 ${defaultDocumentFastPath(layout)}
   const recordOffset = borrowSource ? <usize>16 : align8(<usize>16 + <usize>length);
-  const capacity = recordOffset + ${layout.recordSize + 1024} + <usize>length * 16;
+  const baseCapacity = recordOffset + ${layout.recordSize + 1024};
+  const fullCapacity = baseCapacity + <usize>length * 16;
+  const compactCapacity = baseCapacity + <usize>length + (<usize>length >> 2);
+  const capacity = output != 0
+    ? <usize>outputCapacity
+    : conservativeCapacity ? fullCapacity : compactCapacity;
   if (output != 0) {
-    if (<usize>outputCapacity < capacity) return failResult(2, 0, <u32>capacity);
+    if (<usize>outputCapacity < baseCapacity) return failResult(2, 0, <u32>baseCapacity);
   }
   const allocated = output != 0 ? output : allocateDocument(<u32>capacity);
   if (allocated == 0) return 0;
@@ -642,15 +668,25 @@ ${defaultDocumentFastPath(layout)}
   graphSource = borrowSource ? <usize>source : document + sourceOffset;
   graphCursor = document + recordOffset + ${layout.recordSize};
   graphLimit = document + capacity;
-  graphScratch = graphLimit;
+  graphScratch = graphLimit & ~(<usize>7);
   graphFault = 0;
   graphDepth = 0;
   graphOrdered = true;
   graphBoundaryTrusted = output != 0 && trustedStringInput && borrowSource;
+  graphOutOfSpace = false;
   const record = document + recordOffset;
   if (!initialize${layout.name}Record(record)) return fail${layout.name}Graph(allocated, 3, graphFault, <u32>capacity);
   const parsedEnd = parse${layout.name}Record(graphSource, graphSource + length, record);
-  if (parsedEnd == 0) return fail${layout.name}Graph(allocated, 16, graphFault, 0);
+  if (parsedEnd == 0) {
+    if (graphOutOfSpace) {
+      if (output == 0 && !conservativeCapacity) {
+        releaseDocument(allocated);
+        return parse${layout.name}Core(source, length, trustedStringInput, borrowSource, 0, 0, true);
+      }
+      return fail${layout.name}Graph(allocated, 2, graphFault, <u32>fullCapacity);
+    }
+    return fail${layout.name}Graph(allocated, 16, graphFault, 0);
+  }
   if (graphOrdered && inputWasMinified()) {
     if (parsedEnd != graphSource + length) return fail${layout.name}Graph(allocated, 20, <u32>(parsedEnd - graphSource), 0);
     ${sourceFastPath ? "markDocumentSourceCandidate(document);" : ""}
@@ -660,7 +696,10 @@ ${defaultDocumentFastPath(layout)}
   }
   const documentLength = <u32>(graphCursor - document);
   store<u32>(document, documentLength);
-  if (output == 0) setResultRoot(<u32>recordOffset);
+  if (output == 0) {
+    ${layout.lazyOffset === undefined ? "trimDocument(allocated, documentLength);" : ""}
+    setResultRoot(<u32>recordOffset);
+  }
   return allocated;
 }
 
@@ -826,7 +865,7 @@ export function materialize${layout.name}Field(documentPointer: u32, recordPoint
   graphSource = documentSource(document);
   graphCursor = <usize>arenaCursor;
   graphLimit = <usize>arenaLimit;
-  graphScratch = graphLimit;
+  graphScratch = graphLimit & ~(<usize>7);
   graphFault = 0;
   graphDepth = 0;
   graphOrdered = true;

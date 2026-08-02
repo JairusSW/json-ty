@@ -25,9 +25,10 @@ classes, or GC objects. JavaScript sees strongly typed views with normal field
 access, mutation, class methods, and `instanceof`.
 
 > **Status:** early and intentionally versioned `0.0.0`. Install directly from
-> GitHub while the API and packaging settle. Node.js is the primary target; the
-> generated artifact uses the portable SWAR tier and bulk memory by default;
-> Wasm SIMD is an explicit compile-time tier.
+> GitHub while the API and packaging settle. Node.js hosts the compiler toolchain;
+> generated ESM/Wasm artifacts run across browsers and workers, Deno, Bun, and
+> Node. The portable SWAR tier and bulk memory are the defaults; Wasm SIMD is an
+> explicit compile-time tier.
 
 <details>
 <summary>Table of Contents</summary>
@@ -68,9 +69,10 @@ npm i JairusSW/json-ty
 npm i -D typescript@^6.0.3 ts-patch@^4.0.1
 ```
 
-`json-ty` is ESM-first and requires Node.js 22.15 or newer. Builds use the
-TypeScript 6 JavaScript compiler and ts-patch 4; the native TypeScript 7
-compiler does not yet expose the transformer API json-ty needs.
+`json-ty` is ESM-first. The compiler/build step requires Node.js 22.15 or newer
+and uses the TypeScript 6 JavaScript compiler with ts-patch 4; the generated
+runtime does not require Node. The native TypeScript 7 compiler does not yet
+expose the transformer API json-ty needs.
 
 > If the project already uses TypeScript 7, keep the TypeScript 6 compiler in a
 > separate build workspace for now. Do not point ts-patch at the native
@@ -245,7 +247,7 @@ The default build directory is `.json-ty/`:
 ├── generated.ts           # inspectable generated AssemblyScript
 ├── runtime.wasm           # application-specific parser/writer
 ├── runtime.wat            # inspectable WebAssembly text
-├── runtime.js             # Node binding and generated view classes
+├── runtime.js             # portable binding and generated view classes
 └── cache/<hash>/          # semantic build cache
 ```
 
@@ -265,6 +267,26 @@ const text = __jsonTy_s0(point);
 The import path is calculated independently for every emitted source file, so
 ordinary `src/` → `dist/` projects and nested modules resolve the same generated
 runtime correctly.
+
+### Runtime portability
+
+Generated runtimes use only ESM, WebAssembly, URL, and standard text-codec
+APIs. The same artifact runs in browsers and workers, Deno, Bun, and Node:
+
+```ts
+import { instantiateRawBinding } from "json-ty/raw";
+
+const binding = await instantiateRawBinding(
+  new URL("./runtime.wasm", import.meta.url),
+);
+```
+
+The loader also accepts Wasm bytes, `WebAssembly.Module`, `Response`, `Request`,
+and blob-like values. Browser and worker URLs and relative strings use `fetch`;
+Deno, Bun, and Node use their native reader for local paths and `file:` URLs.
+Deno needs read permission when loading a local artifact. `RawNodeBinding` and
+the `json-ty/browser` entry point remain as compatibility spellings; new
+cross-runtime code should use `RawBinding` or `instantiateRawBinding`.
 
 ## How It Works
 
@@ -305,8 +327,9 @@ Normal typed parse and stringify each cross the JS/Wasm boundary once.
 
 ### Classes
 
-Classes must be explicitly marked. Merely mentioning an internal class from a
-typed call never opts it into serialization by accident.
+Class hierarchies must opt in with `@json` once. The decorated class and all
+subclasses are eligible; unrelated classes mentioned by a typed graph are
+never opted in accidentally.
 
 ```ts
 import { JSON, json } from "json-ty";
@@ -325,29 +348,41 @@ With `strictPropertyInitialization`, use definite-assignment assertions as
 above or provide defaults. Missing fields without defaults remain absent;
 missing fields with JSON-literal defaults read the declared default.
 
-Nested classes, inheritance, recursive records, discriminated unions, literal
-types, enums, and concrete generic instantiations are supported. Every
-structured type in the reachable graph must be explicit.
+Nested classes, recursive records, discriminated unions, literal types, enums,
+and concrete generic instantiations are supported. Every reachable class must
+be decorated or inherit from a decorated class.
 
 ### Interfaces and Type Aliases
 
-TypeScript cannot decorate interfaces or aliases, so mark them once with the
-erased `JSON.schema<T>()` declaration:
+Interfaces and named object aliases are discovered directly from typed calls;
+they need no decorator or marker. Extended interfaces are flattened
+recursively, including multiple and generic bases:
 
 ```ts
 import { JSON } from "json-ty";
 
-interface Point {
+interface Identified {
+  id: number;
+}
+
+interface Point extends Identified {
   x: number;
   y: number;
 }
 
-JSON.schema<Point>();
-
-const point = JSON.parse<Point>('{"x":10,"y":20}');
+const point = JSON.parse<Point>('{"id":1,"x":10,"y":20}');
 ```
 
-The marker is removed from emitted JavaScript.
+`JSON.schema<T>()` remains available to pre-generate an otherwise unreachable
+interface or alias and is removed from emitted JavaScript.
+
+Class inheritance is also flattened across the complete base chain. Public
+fields, constructor parameter properties, concrete generic substitutions,
+defaults, and json-ty field decorators are inherited. Derived overrides win;
+private and protected members are excluded. A subclass of an `@json` class is
+automatically eligible and does not need to repeat the decorator. Base fields
+keep their position in the serialized shape, matching ordinary class property
+insertion order.
 
 ### Arrays and Tuples
 
@@ -533,9 +568,9 @@ Node/Wasm byte boundary:
 | Medium | 392 MB/s | 1,546 MB/s | 3.94x | 1,764 MB/s |
 | Large | 694 MB/s | 2,749 MB/s | 3.96x | 3,059 MB/s |
 
-<img src="./benchmark/charts/overview-deserialize.svg" alt="json-ty overview deserialization throughput">
+<img src="./bench/charts/overview-deserialize.svg" alt="json-ty overview deserialization throughput">
 
-<img src="./benchmark/charts/overview-serialize.svg" alt="json-ty overview serialization throughput">
+<img src="./bench/charts/overview-serialize.svg" alt="json-ty overview serialization throughput">
 
 The serializer chart keeps the normal scale linear. Only extreme cached-view
 outliers use an explicit broken/logarithmic outlier region; the whole chart is
@@ -553,11 +588,11 @@ current resident-kernel gate passes all 12 parse/serialize rows at the required
 - parsing: 1.56x–3.48x json-as across the checked schemas;
 - serialization: 2.56x–98.91x on unchanged verified documents.
 
-<img src="./benchmark/charts/json-as-parity-parse.svg" alt="json-ty and json-as deserialization throughput">
+<img src="./bench/charts/json-as-parity-parse.svg" alt="json-ty and json-as deserialization throughput">
 
-<img src="./benchmark/charts/json-as-parity-serialize.svg" alt="json-ty and json-as serialization throughput">
+<img src="./bench/charts/json-as-parity-serialize.svg" alt="json-ty and json-as serialization throughput">
 
-`RawNodeBinding.parseInto(schema, source, length, output, capacity)` exposes
+`RawBinding.parseInto(schema, source, length, output, capacity)` exposes
 the validating low-level contract. `{ trusted: true }` additionally asserts
 that the caller has already validated canonical JSON and UTF-8, enabling the
 fastest SWAR/SIMD boundary scans. Input and output must not overlap and must
@@ -569,11 +604,10 @@ the proven canonical source. Mutations invalidate that state.
 
 Performance depends heavily on payload shape and access pattern. Plain tiny
 objects, fully materialized lazy documents, and dynamic JSON can favor native
-V8. `parseDynamic(input, { plain: true })` deliberately uses the host JSON
-backend because copying a completed Wasm graph into ordinary host objects adds
-an unavoidable second allocation pass. Byte inputs still receive fatal UTF-8
-validation. Dynamic parsing constructs the complete queryable flat-memory graph
-in one Wasm pass by default. Use
+V8. `parseDynamic(input, { plain: true })` uses the eager schemaless Wasm
+parser and lowers its completed graph directly into ordinary host objects,
+without allocating intermediate dynamic views. Dynamic parsing constructs the
+complete queryable flat-memory graph in one Wasm pass by default. Use
 `parseDynamic(bytes, { eager: false, validate: true })` only when explicitly
 choosing retained nested spans and on-demand materialization. Validation is
 mandatory and enabled by default—`validate: false` and trusted-byte bypasses
@@ -604,13 +638,13 @@ serialization is 24.59–149.01× `JSON.stringify` and 2.46–5.86× json-as.
 Validation-only scanner figures remain separately labeled and are not used to
 satisfy the semantic parity gate.
 
-<img src="./benchmark/charts/classic-v8-deserialize.svg" alt="Resident V8 classic deserialization relative to JSON.parse">
+<img src="./bench/charts/classic-v8-deserialize.svg" alt="Resident V8 classic deserialization relative to JSON.parse">
 
-<img src="./benchmark/charts/classic-v8-serialize.svg" alt="Resident V8 classic serialization relative to JSON.stringify">
+<img src="./bench/charts/classic-v8-serialize.svg" alt="Resident V8 classic serialization relative to JSON.stringify">
 
 Additional published charts cover the complete classic corpus, lazy access
 patterns, raw API paths, tier execution, compile time, Wasm size, and RFC
-coverage under [`benchmark/charts`](./benchmark/charts).
+coverage under [`bench/charts`](./bench/charts).
 
 Results and methodology live in [bench/README.md](./bench/README.md).
 
@@ -623,7 +657,7 @@ Implemented:
 - real arrays, memory-backed arrays, nested arrays, and tuples;
 - discriminated object unions, literal types, and enum representations;
 - typed and dynamic JSON, raw host insertion, lazy parsing, and supported decorators;
-- Node Buffer/string ingress and a lower-level browser byte bridge.
+- portable string/byte ingress across browser and worker APIs, Deno, Bun, and Node.
 
 Build compatibility:
 
@@ -662,10 +696,10 @@ Common failures:
 - **Another transform cannot see its decorator:** place json-ty before that
   transform. json-ty removes only its own imported decorators and preserves
   unknown decorators.
-- **Schema not found:** import `@json` from `json-ty`, or add
-  `JSON.schema<T>()` for an interface/type alias.
+- **Schema not found:** decorate a class or one of its base classes with
+  `@json`. Interfaces and named object aliases are discovered automatically.
 - **Structured dependency rejected:** every class in a typed graph must be
-  explicitly marked.
+  decorated or inherit from a decorated class.
 - **Uninitialized class field:** use `field!: T`, provide a default, or adjust
   `strictPropertyInitialization`.
 - **Call was not optimized:** use an explicit type argument:
@@ -681,7 +715,7 @@ Common failures:
 The short version:
 
 ```text
-Node Buffer/string
+Host string/byte array
       │ raw UTF-8
       ▼
 schema-specialized Wasm parser
@@ -709,11 +743,20 @@ npm run test:all
 npm run bench:parity
 ```
 
-The release gate includes raw ABI/import checks, Node and browser bindings, all
+The release gate includes raw ABI/import checks, Node, Bun, Deno, and browser-style bindings, all
 318 pinned JSONTestSuite parsing fixtures through typed and dynamic APIs,
 generated-project integration, wide schemas, multiword bitmaps, naive/SWAR/SIMD
 differential checks, number/string edge cases, mutation, lifetime safety, and
 build-cache determinism.
+
+CI runs the full Node 22/24 gate on Linux, macOS, and Windows; portable-runtime
+tests run under Bun and Deno on all three operating systems. The browser fixture
+is served over HTTP and executed in Chromium, Chrome, Firefox, Playwright
+WebKit, Windows Edge, and macOS Safari through Safari WebDriver. WebKit and
+Safari are separate jobs so a WebKit result is never presented as an actual
+Safari result. Typechecking, raw bindings, compiler integration, kernel tests,
+the RFC oracle, and differential fuzzing are independent matrix jobs and run in
+parallel for every Node/operating-system pair.
 
 ## Contributing
 

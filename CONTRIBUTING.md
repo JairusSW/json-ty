@@ -23,12 +23,27 @@ For the full scalar and SIMD gate:
 npm run test:all
 ```
 
+Real-browser smoke tests use Playwright after `npm run build:raw`:
+
+```bash
+npx playwright install chromium firefox webkit
+npm run test:browser:chromium
+npm run test:browser:firefox
+npm run test:browser:webkit
+```
+
+CI additionally runs installed Chrome and Edge channels plus macOS Safari via
+`safaridriver`, and repeats runtime portability under Bun and Deno on Linux,
+macOS, and Windows.
+
 ## Repository map
 
 ```text
 compiler/                 TypeScript analysis, schema IR, code generation
 assembly/                 AssemblyScript kernels, prototypes, and experiments
-src/raw/node-binding.js   Node memory, views, lowering, and Wasm ABI
+src/raw/node-binding.js   Shared memory, views, lowering, and Wasm ABI
+src/raw/portable-binding.js
+                          Cross-runtime Wasm loading for web, Deno, Bun, Node
 src/raw/browser-binding.js
 bench/                    Overview, classic, parity, and lazy benchmarks
 scripts/                  Artifact builders and chart generation

@@ -13,6 +13,7 @@ import {
   PUBLICATION_REPORTS,
   suiteWorkloads,
   validatePublicationReports,
+  workloadPlan,
   writeBenchmarkRunManifest,
 } from "./benchmark-plan.mjs";
 
@@ -28,6 +29,19 @@ assert.deepEqual(suiteWorkloads("publish"), [
 ]);
 assert.equal(PUBLICATION_CHARTS.length, 30);
 assert.equal(new Set(PUBLICATION_CHARTS).size, PUBLICATION_CHARTS.length);
+
+for (const workload of ["overview", "classic", "classic-v8"]) {
+  const fullLabels = workloadPlan(workload, false).steps.map((step) => step.label);
+  const smokeLabels = workloadPlan(workload, true).steps.map((step) => step.label);
+  assert.ok(
+    fullLabels.some((label) => label.includes("gate")),
+    `${workload} full run must enforce a performance gate`,
+  );
+  assert.ok(
+    !smokeLabels.some((label) => label.includes("gate")),
+    `${workload} smoke run must not enforce noisy performance gates`,
+  );
+}
 
 const previous = process.cwd();
 const temporary = mkdtempSync(join(tmpdir(), "json-ty-benchmark-plan-"));

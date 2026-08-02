@@ -268,6 +268,26 @@ export function reserveDocument(document: u32, minimumSize: u32): u32 {
   return growDocumentTo(document, minimumSize, false);
 }
 
+/** Return unused wilderness capacity after a generated one-pass parse. */
+export function trimDocument(document: u32, usedSize: u32): u32 {
+  if (!initialized || document < heapBase + BLOCK_HEADER_SIZE) {
+    return STATUS_INVALID_STATE;
+  }
+  const block = <usize>document - BLOCK_HEADER_SIZE;
+  const sizeWord = load<u32>(block);
+  if ((sizeWord & BLOCK_ALLOCATED) == 0) return STATUS_INVALID_STATE;
+  const blockSize = <usize>(sizeWord & BLOCK_SIZE_MASK);
+  if (block + blockSize != heapBump) return STATUS_INVALID_STATE;
+
+  const nextTotal = align8(<usize>usedSize) + BLOCK_HEADER_SIZE;
+  if (nextTotal > blockSize) return STATUS_INVALID_STATE;
+  if (blockSize - nextTotal < MIN_SPLIT_SIZE) return STATUS_OK;
+  heapBump = block + nextTotal;
+  store<u32>(block, <u32>nextTotal | BLOCK_ALLOCATED);
+  store<u32>(resultPtr + RESULT_DOCUMENT_LENGTH, usedSize);
+  return STATUS_OK;
+}
+
 export function releaseDocument(document: u32): u32 {
   if (!initialized) return STATUS_INVALID_STATE;
   // Caller-owned parseInto documents carry no allocator block. Releasing one
