@@ -49,6 +49,42 @@ ${schemaVariable}.View = ${layout.name}HostView;`;
     .join("\n");
 }
 
+function canEmitPlainProjection(layout: ObjectLayout): boolean {
+  return !layout.nativeStringifyCompatible && layout.fields.every((field) =>
+    (field.kind === "number" || field.kind === "boolean" || field.kind === "string" || field.kind === "null") &&
+    field.jsonName !== "__proto__" && field.jsonName !== "toJSON" &&
+    !field.decorators?.raw && !field.decorators?.codec && !field.decorators?.omitIf && !field.hostManaged
+  );
+}
+
+function emitPlainStringifiers(layouts: ObjectLayout[]): string {
+  return layouts
+    .map((layout, index) => {
+      if (!canEmitPlainProjection(layout)) return "";
+      const schemaVariable = `schema${index}`;
+      const functionName = `stringify${layout.name}Plain`;
+      const fields = layout.fields
+        .filter((field) => !field.decorators?.omit)
+        .map((field) => {
+          const value = `value[${JSON.stringify(field.name)}]`;
+          const condition = field.decorators?.omitNull
+            ? `${value} !== undefined && ${value} !== null`
+            : `${value} !== undefined`;
+          return `  if (${condition}) output[${JSON.stringify(field.jsonName)}] = ${value};`;
+        })
+        .join("\n");
+      return `function ${functionName}(value) {
+  if (value === null || typeof value !== "object") throw new TypeError(${JSON.stringify(`Expected an object for ${layout.name}`)});
+  const output = {};
+${fields}
+  return JSON.stringify(output);
+}
+Object.defineProperty(${schemaVariable}, "_plainStringifier", { value: ${functionName} });`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 function bindingTarget(layout: ObjectLayout, schemaVariable: string): string {
   const fieldType = layout.fields[0]?.type;
   const element = fieldType?.kind === "array" ? fieldType.element : undefined;
@@ -104,6 +140,7 @@ const binding = await instantiateRawBinding(new URL("./runtime.wasm", import.met
 export const schemas = createSchemaRegistry(${JSON.stringify(layouts)}, { views: false });
 ${schemaDeclarations}
 ${emitViewClasses(layouts)}
+${emitPlainStringifiers(layouts)}
 export const __jsonTyRuntime = {
   binding,
   schemas,

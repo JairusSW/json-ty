@@ -4,6 +4,12 @@ import { RawNodeBinding, bindSchemaClass, createObjectView, createSchemaRegistry
 import { JSON as JsonTy } from "../../dist/src/index.js";
 
 const wasmBytes = readFileSync("build/raw/runtime.wasm");
+const defaultRuntime = new RawNodeBinding(wasmBytes);
+assert.equal(defaultRuntime.memory.buffer.byteLength, (8 * 1024 + 192) * 1024, "default binding reserves only one heap page");
+const defaultInitialBytes = defaultRuntime.memory.buffer.byteLength;
+const defaultGrowthDocument = defaultRuntime.commit("g".repeat(256 << 10));
+assert.ok(defaultRuntime.memory.buffer.byteLength > defaultInitialBytes, "default binding grows and retries without a large eager heap reserve");
+defaultRuntime.release(defaultGrowthDocument.pointer);
 const runtime = new RawNodeBinding(wasmBytes, {
   scratchCapacity: 1 << 20,
   heapReserve: 1 << 20,
@@ -329,6 +335,25 @@ assert.equal(pets.pets[1].lives, 9);
 assert.equal(runtime.stringify(PetHolder, pets), '{"pet":{"kind":"cat","lives":7},"pets":[{"kind":"dog","good":true},{"kind":"cat","lives":9}]}');
 pets.dispose();
 assert.throws(() => runtime.parse(PetHolder, '{"pet":{"kind":"bird"},"pets":[]}'), SyntaxError);
+
+const jsPlanRegistry = createSchemaRegistry(layouts.map((layout) => {
+  if (layout.name !== "PetHolder") return layout;
+  return {
+    ...layout,
+    nativeStringifyCompatible: false,
+    fields: layout.fields.map((field) => field.name === "pet" ? { ...field, jsonName: "favorite" } : field),
+  };
+}));
+const jsPlanPetHolder = jsPlanRegistry.get("PetHolder");
+assert.equal(
+  runtime.stringifyJS(jsPlanPetHolder, { pet: { kind: "cat", lives: 8 }, pets: [{ kind: "dog", good: true }] }),
+  '{"favorite":{"kind":"cat","lives":8},"pets":[{"kind":"dog","good":true}]}',
+  "compiled JS plans cover aliases, nested objects, unions, and arrays",
+);
+assert.throws(
+  () => runtime.stringifyJS(jsPlanPetHolder, { pet: { kind: "bird" }, pets: [] }),
+  /Unknown discriminated union variant/,
+);
 
 const dynamicInput = '{"name":"café","items":[1,true,null,{"x":"a\\nb"}],"wide":{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8},"dup":1,"dup":2}';
 const dynamic = runtime.parseDynamic(dynamicInput);

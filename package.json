@@ -130,6 +130,7 @@
     "bench:publish": "bash ./scripts/publish-benchmarks.sh",
     "bench:swar-port": "npm run bench:swar-port:primitives && npm run bench:swar-port:scanner && npm run bench:swar-port:scanner:simd && npm run bench:swar-port:string && npm run bench:swar-port:string:simd && npm run bench:swar-port:integer && npm run bench:swar-port:float && npm run bench:swar-port:arrays && npm run bench:swar-port:document && npm run bench:swar-port:serialize-string && npm run bench:swar-port:serialize-string:simd",
     "bench:overview": "bash ./scripts/run-bench.sh overview",
+    "bench:js-writer": "npm run build:raw && node ./bench/js-writer.bench.mjs",
     "bench:obj": "npm run build:compiler && node ./scripts/build-overview-runtime.mjs && cross-env JSON_TY_OVERVIEW_FILTER=small,medium,large node ./bench/overview.bench.mjs && node ./scripts/check-json-obj-threshold.mjs",
     "bench:classic": "npm run bench:classic:run && npm run bench:classic:charts",
     "bench:classic:run": "npm run build:compiler && node ./scripts/build-classic-runtime.mjs && node ./bench/classic.bench.mjs",

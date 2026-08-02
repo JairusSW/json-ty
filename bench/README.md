@@ -53,6 +53,13 @@ Outputs:
 - `build/charts/overview-serialize.{svg,png}`
 - `build/charts/overview-deserialize.{svg,png}`
 
+`npm run bench:js-writer` is the focused plain-object routing benchmark. It
+checks semantic equality and compares a schema-specific projection, the former
+generic schema walk, the lazily compiled JS plan, and plain-object Wasm. The
+compiler only emits the projection for the primitive decorator shapes where
+that head-to-head winner is safe; native-compatible objects remain on the host
+engine's built-in JSON writer and retained Documents remain on Wasm.
+
 `npm run bench:all` regenerates every report required for publication, runs
 every ported kernel microbenchmark, renders all benchmark-backed charts, and
 syncs the publishable SVGs to `bench/charts/`.

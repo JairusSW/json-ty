@@ -35,7 +35,7 @@ identity with the JavaScript standard library.
 | dedicated AS type kernels | implemented | null/boolean/number/string/array/struct/dynamic modules; schema calls inline |
 | Wasm call boundary | implemented and tested | one Wasm entry per normal typed/dynamic parse or stringify |
 | plain-object Wasm ingress | implemented | retained for workloads where benchmarking selects it |
-| generated JS writer | implemented | decorator and host-managed fallback |
+| generated JS writer | implemented | native-compatible values use V8/JavaScriptCore/SpiderMonkey JSON; primitive alias/omit projections are emitted as straight JS; compiler-produced complex decorators use a lazily compiled CSP-safe plan |
 | explicit document reuse/release | implemented | split/coalescing free list and stale-view protection |
 | portable runtime binding | implemented and cross-runtime tested | one ESM/Wasm artifact; bytes, module, response, URL, request, blob, and local file loading across web APIs, Deno, Bun, and Node |
 | Date | native host fallback | no dedicated Wasm policy yet |

@@ -7,7 +7,10 @@ const PAGE_SIZE = 64 * 1024;
 const DEFAULT_CONTROL = PAGE_SIZE;
 const DEFAULT_SCRATCH = PAGE_SIZE * 2;
 const DEFAULT_SCRATCH_CAPACITY = 8 * 1024 * 1024;
-const DEFAULT_HEAP_RESERVE = 8 * 1024 * 1024;
+// The document allocator reports the exact required limit and parse/commit
+// retry after growing memory. Reserving megabytes here only increased every
+// binding's resident baseline; one page is enough to enter that growth path.
+const DEFAULT_HEAP_RESERVE = PAGE_SIZE;
 
 const STATUS_OK = 0;
 const STATUS_MEMORY_EXHAUSTED = 3;
@@ -93,6 +96,134 @@ function stringifyJsonValue(input) {
     }
   };
   return visit(input, "", false);
+}
+
+/**
+ * Compile immutable schema metadata into compact serializer plans once. This
+ * keeps compiler-produced host paths free of per-call schema walks, registry
+ * lookups, decorator branching, and temporary arrays.
+ */
+function compilePlainStringifier(rootSchema) {
+  const registry = rootSchema._registry ?? new Map([[rootSchema.name, rootSchema]]);
+  const records = new Map();
+  const needsCycleTracking = rootSchema.fields.some((field) => field.kind === "object" || field.kind === "union" || field.kind === "array");
+
+  const compileOmitExpression = (expression) => {
+    if (expression.kind === "literal") return () => expression.value;
+    if (expression.kind === "field") return (value) => value[expression.name];
+    if (expression.kind === "unary") {
+      const operand = compileOmitExpression(expression.operand);
+      if (expression.operator === "!") return (value) => !operand(value);
+      if (expression.operator === "+") return (value) => +operand(value);
+      return (value) => -operand(value);
+    }
+    const left = compileOmitExpression(expression.left);
+    const right = compileOmitExpression(expression.right);
+    const operations = {
+      "+": (a, b) => a + b,
+      "-": (a, b) => a - b,
+      "*": (a, b) => a * b,
+      "/": (a, b) => a / b,
+      "%": (a, b) => a % b,
+      "<": (a, b) => a < b,
+      "<=": (a, b) => a <= b,
+      ">": (a, b) => a > b,
+      ">=": (a, b) => a >= b,
+      "==": (a, b) => a == b,
+      "!=": (a, b) => a != b,
+      "&&": (a, b) => a && b,
+      "||": (a, b) => a || b,
+    };
+    const operation = operations[expression.operator];
+    return (value) => operation(left(value), right(value));
+  };
+
+  const compileType = (type) => {
+    if (type.kind === "object") {
+      const nested = registry.get(type.typeName);
+      if (!nested) throw new TypeError(`Missing schema ${type.typeName}`);
+      return compileRecord(nested);
+    }
+    if (type.kind === "union") {
+      const variants = new Map(type.variants.map((variant) => {
+        const nested = registry.get(variant.typeName);
+        if (!nested) throw new TypeError(`Missing schema ${variant.typeName}`);
+        return [variant.discriminatorValue, compileRecord(nested)];
+      }));
+      return (value, stack) => {
+        const serialize = variants.get(value?.[type.discriminator]);
+        if (serialize === undefined) throw new TypeError("Unknown discriminated union variant");
+        return serialize(value, stack);
+      };
+    }
+    if (type.kind === "array") {
+      const homogeneous = compileType(type.element);
+      const tuple = type.elements?.map(compileType);
+      return (value, stack) => {
+        const values = Array.isArray(value) ? value : value instanceof JsonArrayView ? value.toArray() : null;
+        if (values === null) throw new TypeError("Expected an array");
+        if (tuple !== undefined && values.length !== tuple.length) throw new TypeError(`Expected a tuple of length ${tuple.length}`);
+        let output = "[";
+        for (let index = 0; index < values.length; index++) {
+          if (index !== 0) output += ",";
+          const item = values[index];
+          if (item === undefined || typeof item === "function" || typeof item === "symbol") output += "null";
+          else output += (tuple?.[index] ?? homogeneous)(item, stack) ?? "null";
+        }
+        return output + "]";
+      };
+    }
+    return (value) => JSON.stringify(value);
+  };
+
+  const compileRecord = (schema) => {
+    const cached = records.get(schema.name);
+    if (cached !== undefined) return cached;
+    let implementation;
+    const serializeRecord = (value, stack) => implementation(value, stack);
+    records.set(schema.name, serializeRecord);
+    const fields = schema.fields
+      .filter((field) => !field.decorators?.omit)
+      .map((field) => ({
+        field,
+        prefix: `${JSON.stringify(field.jsonName)}:`,
+        serialize: compileType(field.type ?? { kind: field.kind }),
+        omitIf: field.decorators?.omitIfPlan
+          ? compileOmitExpression(field.decorators.omitIfPlan)
+          : field.decorators?.omitIf
+            ? new Function(field.decorators.omitIfParameter ?? "self", `return (${field.decorators.omitIf});`)
+            : null,
+      }));
+    implementation = (value, stack) => {
+      if (value === null || typeof value !== "object") return JSON.stringify(value);
+      if (stack?.has(value)) throw new TypeError("Converting circular structure to JSON");
+      stack?.add(value);
+      let output = "{";
+      let wrote = false;
+      try {
+        for (let index = 0; index < fields.length; index++) {
+          const plan = fields[index];
+          const fieldValue = value[plan.field.name];
+          if (fieldValue === undefined || typeof fieldValue === "function" || typeof fieldValue === "symbol") continue;
+          if (fieldValue === null && plan.field.decorators?.omitNull) continue;
+          if (plan.omitIf?.(value)) continue;
+          const encoded = plan.field.decorators?.raw ? rawJsonText(fieldValue) : plan.serialize(fieldValue, stack);
+          if (plan.field.decorators?.raw && encoded === undefined) throw new TypeError(`${plan.field.name} must be a JSON.Raw value`);
+          if (encoded === undefined) continue;
+          if (wrote) output += ",";
+          output += plan.prefix + encoded;
+          wrote = true;
+        }
+        return output + "}";
+      } finally {
+        stack?.delete(value);
+      }
+    };
+    return serializeRecord;
+  };
+
+  const serialize = compileRecord(rootSchema);
+  return needsCycleTracking ? (value) => serialize(value, new Set()) : (value) => serialize(value, null);
 }
 
 export class RawNodeBinding {
@@ -549,72 +680,14 @@ export class RawNodeBinding {
     if (value === null || typeof value !== "object") {
       throw new TypeError(`Expected an object for ${schema.name}`);
     }
+    let compiled = schema._plainStringifier;
+    if (compiled !== undefined) return compiled(value);
     if (schema.nativeStringifyCompatible && value?.[RAW_RUNTIME] === undefined) return JSON.stringify(value);
-    const registry = schema._registry ?? new Map([[schema.name, schema]]);
-    const stack = new Set();
-    const serializeValue = (type, fieldValue) => {
-      if (type.kind === "object") {
-        const nested = registry.get(type.typeName);
-        if (!nested) throw new TypeError(`Missing schema ${type.typeName}`);
-        return serializeRecord(nested, fieldValue);
-      }
-      if (type.kind === "union") {
-        const variant = type.variants.find((item) => fieldValue?.[type.discriminator] === item.discriminatorValue);
-        if (!variant) throw new TypeError("Unknown discriminated union variant");
-        const nested = registry.get(variant.typeName);
-        if (!nested) throw new TypeError(`Missing schema ${variant.typeName}`);
-        return serializeRecord(nested, fieldValue);
-      }
-      if (type.kind === "array") {
-        const values = Array.isArray(fieldValue) ? fieldValue : fieldValue instanceof JsonArrayView ? fieldValue.toArray() : null;
-        if (values === null) throw new TypeError("Expected an array");
-        if (type.elements && values.length !== type.elements.length) {
-          throw new TypeError(`Expected a tuple of length ${type.elements.length}`);
-        }
-        return `[${values
-          .map((item, index) => {
-            if (item === undefined || typeof item === "function" || typeof item === "symbol") return "null";
-            return serializeValue(type.elements?.[index] ?? type.element, item) ?? "null";
-          })
-          .join(",")}]`;
-      }
-      return JSON.stringify(fieldValue);
-    };
-    const serializeRecord = (recordSchema, recordValue) => {
-      if (recordValue === null || typeof recordValue !== "object") return JSON.stringify(recordValue);
-      if (stack.has(recordValue)) throw new TypeError("Converting circular structure to JSON");
-      stack.add(recordValue);
-      let output = "{";
-      let wrote = false;
-      try {
-        for (const field of recordSchema.fields) {
-          if (field.decorators?.omit) continue;
-          const fieldValue = recordValue[field.name];
-          if (fieldValue === undefined || typeof fieldValue === "function" || typeof fieldValue === "symbol") continue;
-          if (fieldValue === null && field.decorators?.omitNull) continue;
-          if (field.decorators?.omitIf) {
-            let predicate = field._omitPredicate;
-            if (predicate === undefined) {
-              predicate = new Function(field.decorators.omitIfParameter ?? "self", `return (${field.decorators.omitIf});`);
-              Object.defineProperty(field, "_omitPredicate", { value: predicate });
-            }
-            if (predicate(recordValue)) continue;
-          }
-          const encoded = field.decorators?.raw ? rawJsonText(fieldValue) : serializeValue(field.type ?? { kind: field.kind }, fieldValue);
-          if (field.decorators?.raw && encoded === undefined) {
-            throw new TypeError(`${field.name} must be a JSON.Raw value`);
-          }
-          if (encoded === undefined) continue;
-          if (wrote) output += ",";
-          output += `${JSON.stringify(field.jsonName)}:${encoded}`;
-          wrote = true;
-        }
-        return output + "}";
-      } finally {
-        stack.delete(recordValue);
-      }
-    };
-    return serializeRecord(schema, value);
+    if (compiled === undefined) {
+      compiled = compilePlainStringifier(schema);
+      Object.defineProperty(schema, "_plainStringifier", { value: compiled });
+    }
+    return compiled(value);
   }
 
   read(pointer, length) {

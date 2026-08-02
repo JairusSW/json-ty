@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { generateAssemblyModule } from "../../dist/compiler/record-codegen/index.js";
+import { generateHostArtifact } from "../../dist/compiler/host-artifact/index.js";
 
 const generatedModule = generateAssemblyModule([
   {
@@ -18,8 +19,17 @@ const generatedModule = generateAssemblyModule([
       { name: "values", kind: "array", type: { kind: "array", element: { kind: "number" }, facade: "array" }, decorators: { lazy: true } },
     ],
   },
+  {
+    name: "Projected",
+    fields: [
+      { name: "id", kind: "number", jsonName: "identifier" },
+      { name: "note", kind: "string", nullable: true, decorators: { omitNull: true } },
+      { name: "secret", kind: "string", decorators: { omit: true } },
+    ],
+  },
 ]);
 const generated = generatedModule.assembly;
+const generatedHost = generateHostArtifact(generatedModule.layouts).source;
 
 for (const module of ["deserialize/number", "deserialize/null", "deserialize/string", "deserialize/boolean", "deserialize/array", "deserialize/struct", "serialize/number", "serialize/null", "serialize/string", "serialize/boolean", "serialize/array", "serialize/struct", "layout/document"]) {
   assert.match(generated, new RegExp(`from ".*${module}"`));
@@ -62,5 +72,9 @@ assert.doesNotMatch(generated, /maximumCount/);
 assert.doesNotMatch(generated, /inspectArray/);
 assert.doesNotMatch(generated, /\bnew\s+[A-Z_a-z]/);
 assert.doesNotMatch(generated, /:\s*(?:string|Array<|StaticArray<|Map<|Set<)/);
+assert.match(generatedHost, /function stringifyProjectedPlain\(value\)/);
+assert.match(generatedHost, /output\["identifier"\] = value\["id"\]/);
+assert.match(generatedHost, /value\["note"\] !== undefined && value\["note"\] !== null/);
+assert.doesNotMatch(generatedHost, /output\["secret"\]/);
 
 console.log("AssemblyScript kernel codegen contract: all tests passed");

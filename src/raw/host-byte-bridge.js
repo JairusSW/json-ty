@@ -76,8 +76,6 @@ export class HostByteBridge {
     this.runtime.buffer = this.codec.memoryView(buffer);
     this.runtime.u8 = new Uint8Array(buffer);
     this.runtime.u32 = new Uint32Array(buffer);
-    this.runtime.i32 = new Int32Array(buffer);
-    this.runtime.f32 = new Float32Array(buffer);
     this.runtime.f64 = new Float64Array(buffer);
   }
 

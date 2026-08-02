@@ -114,6 +114,10 @@ large blocks; release coalesces adjacent blocks and rejects stale/double frees.
 The allocation bit is stored in the high bit of the block size. A last-in,
 first-out release with no intervening free blocks rewinds the bump pointer
 directly, avoiding free-list insertion and splitting for short-lived documents.
+The host reserves the full 8 MiB operation-scratch ceiling but only one 64 KiB
+persistent page initially. On allocator exhaustion the runtime reports its
+exact required limit, the host grows linear memory, refreshes its three used
+typed views (`u8`, `u32`, and `f64`), and retries the operation.
 
 Typed documents use only relative 32-bit offsets, so a memory grow does not
 invalidate internal references. The host binding refreshes its optional Buffer,
